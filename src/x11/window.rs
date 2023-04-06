@@ -6,7 +6,9 @@ use std::sync::Arc;
 use std::thread;
 use std::time::*;
 
-use raw_window_handle::{HasRawWindowHandle, RawWindowHandle, XlibWindowHandle};
+use raw_window_handle::{
+    HasRawDisplayHandle, HasRawWindowHandle, RawWindowHandle, XlibDisplayHandle, XlibWindowHandle,
+};
 use xcb::ffi::xcb_screen_t;
 use xcb::StructPtr;
 
@@ -688,9 +690,21 @@ unsafe impl HasRawWindowHandle for Window {
     fn raw_window_handle(&self) -> RawWindowHandle {
         let mut handle = XlibWindowHandle::empty();
         handle.window = self.window_id as c_ulong;
-        handle.display = self.xcb_connection.conn.get_raw_dpy() as *mut c_void;
+
+        let setup = self.xcb_connection.conn.get_setup();
+        let screen = setup.roots().nth(self.xcb_connection.xlib_display as usize).unwrap();
+        handle.visual_id = screen.root_visual() as u64;
 
         RawWindowHandle::Xlib(handle)
+    }
+}
+
+unsafe impl HasRawDisplayHandle for Window {
+    fn raw_display_handle(&self) -> raw_window_handle::RawDisplayHandle {
+        let mut handle = XlibDisplayHandle::empty();
+        handle.display = self.xcb_connection.conn.get_raw_dpy() as *mut c_void;
+
+        raw_window_handle::RawDisplayHandle::Xlib(handle)
     }
 }
 
