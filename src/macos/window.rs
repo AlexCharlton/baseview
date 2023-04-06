@@ -17,7 +17,10 @@ use keyboard_types::KeyboardEvent;
 
 use objc::{msg_send, runtime::Object, sel, sel_impl};
 
-use raw_window_handle::{AppKitWindowHandle, HasRawWindowHandle, RawWindowHandle};
+use raw_window_handle::{
+    AppKitDisplayHandle, AppKitWindowHandle, HasRawDisplayHandle, HasRawWindowHandle,
+    RawDisplayHandle, RawWindowHandle,
+};
 
 use crate::{
     Event, EventStatus, Size, WindowEvent, WindowHandler, WindowInfo, WindowOpenOptions,
@@ -481,6 +484,14 @@ unsafe impl HasRawWindowHandle for Window {
         handle.ns_view = self.ns_view as *mut c_void;
 
         RawWindowHandle::AppKit(handle)
+    }
+}
+
+unsafe impl HasRawDisplayHandle for Window<'_> {
+    fn raw_display_handle(&self) -> RawDisplayHandle {
+        let mut handle = AppKitDisplayHandle::empty();
+
+        RawDisplayHandle::AppKit(handle)
     }
 }
 

@@ -24,7 +24,10 @@ use std::os::windows::ffi::OsStrExt;
 use std::ptr::null_mut;
 use std::rc::Rc;
 
-use raw_window_handle::{HasRawWindowHandle, RawWindowHandle, Win32WindowHandle};
+use raw_window_handle::{
+    HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandle, RawWindowHandle, Win32WindowHandle,
+    WindowsDisplayHandle,
+};
 
 const BV_WINDOW_MUST_CLOSE: UINT = WM_USER + 1;
 
@@ -761,6 +764,14 @@ unsafe impl HasRawWindowHandle for Window<'_> {
         handle.hwnd = self.state.hwnd as *mut c_void;
 
         RawWindowHandle::Win32(handle)
+    }
+}
+
+unsafe impl HasRawDisplayHandle for Window<'_> {
+    fn raw_display_handle(&self) -> RawDisplayHandle {
+        let mut handle = WindowsDisplayHandle::empty();
+
+        RawDisplayHandle::Windows(handle)
     }
 }
 
