@@ -1,3 +1,4 @@
+mod drop_handler;
 mod keyboard;
 mod window;
 

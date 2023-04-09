@@ -1,6 +1,7 @@
 use winapi::shared::guiddef::GUID;
 use winapi::shared::minwindef::{ATOM, FALSE, LPARAM, LRESULT, UINT, WPARAM};
 use winapi::shared::windef::{HWND, RECT};
+use winapi::shared::winerror::{OLE_E_WRONGCOMPOBJ, RPC_E_CHANGED_MODE, S_OK};
 use winapi::um::combaseapi::CoCreateGuid;
 use winapi::um::winuser::{
     AdjustWindowRectEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
@@ -15,6 +16,7 @@ use winapi::um::winuser::{
     WS_CLIPSIBLINGS, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUPWINDOW, WS_SIZEBOX, WS_VISIBLE,
     XBUTTON1, XBUTTON2,
 };
+use winapi::um::{ole2, oleidl::LPDROPTARGET};
 
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
@@ -36,6 +38,7 @@ use crate::{
     WindowHandler, WindowInfo, WindowOpenOptions, WindowScalePolicy,
 };
 
+use super::drop_handler::DropHandler;
 use super::keyboard::KeyboardState;
 
 #[cfg(feature = "opengl")]
@@ -457,6 +460,7 @@ struct WindowState {
     window_class: ATOM,
     window_info: RefCell<WindowInfo>,
     _parent_handle: Option<ParentHandle>,
+    drop_handler: DropHandler,
     keyboard_state: RefCell<KeyboardState>,
     mouse_button_counter: Cell<usize>,
     // Initialized late so the `Window` can hold a reference to this `WindowState`
@@ -571,7 +575,7 @@ impl Window<'_> {
             let mut msg: MSG = std::mem::zeroed();
 
             loop {
-                let status = GetMessageW(&mut msg, hwnd, 0, 0);
+                let status = GetMessageW(&mut msg, null_mut(), 0, 0);
 
                 if status == -1 {
                     break;
@@ -656,12 +660,14 @@ impl Window<'_> {
 
             let (parent_handle, window_handle) = ParentHandle::new(hwnd);
             let parent_handle = if parented { Some(parent_handle) } else { None };
+            let drop_handler = DropHandler::new(hwnd, Box::new(|e| ()));
 
             let window_state = Box::new(WindowState {
                 hwnd,
                 window_class,
                 window_info: RefCell::new(window_info),
                 _parent_handle: parent_handle,
+                drop_handler,
                 keyboard_state: RefCell::new(KeyboardState::new()),
                 mouse_button_counter: Cell::new(0),
                 // The Window refers to this `WindowState`, so this `handler` needs to be
@@ -683,6 +689,22 @@ impl Window<'_> {
                 build(&mut window)
             };
             *window_state.handler.borrow_mut() = Some(Box::new(handler));
+
+            let ole_init_result = ole2::OleInitialize(null_mut());
+            // It is ok if the initialize result is `S_FALSE` because it might happen that
+            // multiple windows are created on the same thread.
+            if ole_init_result == OLE_E_WRONGCOMPOBJ {
+                panic!("OleInitialize failed! Result was: `OLE_E_WRONGCOMPOBJ`");
+            } else if ole_init_result == RPC_E_CHANGED_MODE {
+                panic!(
+                    "OleInitialize failed! Result was: `RPC_E_CHANGED_MODE`. \
+                     Make sure other crates are not using multithreaded COM library \
+                     on the same thread or disable drag and drop support."
+                );
+            }
+            let handler_interface_ptr =
+                &mut (*window_state.drop_handler.data).interface as LPDROPTARGET;
+            assert_eq!(ole2::RegisterDragDrop(hwnd, handler_interface_ptr), S_OK);
 
             // Only works on Windows 10 unfortunately.
             SetProcessDpiAwarenessContext(
