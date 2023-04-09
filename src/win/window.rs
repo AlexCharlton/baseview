@@ -464,7 +464,7 @@ struct WindowState {
     keyboard_state: RefCell<KeyboardState>,
     mouse_button_counter: Cell<usize>,
     // Initialized late so the `Window` can hold a reference to this `WindowState`
-    handler: RefCell<Option<Box<dyn WindowHandler>>>,
+    handler: Rc<RefCell<Option<Box<dyn WindowHandler>>>>,
     scale_policy: WindowScalePolicy,
     dw_style: u32,
 
@@ -661,10 +661,28 @@ impl Window<'_> {
 
                 GlContext::create(&handle, gl_config).expect("Could not create OpenGL context")
             });
+            // The Window refers to this `WindowState`, so this `handler` needs to be
+            // initialized later
+            let handler: Rc<RefCell<Option<Box<dyn WindowHandler>>>> = Rc::new(RefCell::new(None));
 
             let (parent_handle, window_handle) = ParentHandle::new(hwnd);
             let parent_handle = if parented { Some(parent_handle) } else { None };
-            let drop_handler = DropHandler::new(hwnd, Box::new(|e| ()));
+
+            let drop_handler_window_handler = handler.clone();
+            let drop_handler = DropHandler::new(
+                hwnd,
+                Box::new(move |e| {
+                    let window_state_ptr =
+                        GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut WindowState;
+                    let mut window = (*window_state_ptr).create_window();
+                    let mut window = crate::Window::new(&mut window);
+                    drop_handler_window_handler
+                        .borrow_mut()
+                        .as_mut()
+                        .unwrap()
+                        .on_event(&mut window, e);
+                }),
+            );
 
             let window_state = Box::new(WindowState {
                 hwnd,
@@ -674,9 +692,7 @@ impl Window<'_> {
                 drop_handler,
                 keyboard_state: RefCell::new(KeyboardState::new()),
                 mouse_button_counter: Cell::new(0),
-                // The Window refers to this `WindowState`, so this `handler` needs to be
-                // initialized later
-                handler: RefCell::new(None),
+                handler,
                 scale_policy: options.scale,
                 dw_style: flags,
 
@@ -795,12 +811,11 @@ unsafe impl HasRawWindowHandle for Window<'_> {
 
 unsafe impl HasRawDisplayHandle for Window<'_> {
     fn raw_display_handle(&self) -> RawDisplayHandle {
-        let mut handle = WindowsDisplayHandle::empty();
-
+        let handle = WindowsDisplayHandle::empty();
         RawDisplayHandle::Windows(handle)
     }
 }
 
-pub fn copy_to_clipboard(data: &str) {
+pub fn copy_to_clipboard(_data: &str) {
     todo!()
 }

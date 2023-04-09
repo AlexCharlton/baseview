@@ -1,3 +1,4 @@
+// Taken from https://github.com/rust-windowing/winit/blob/master/src/platform_impl/windows/drop_handler.rs
 use std::{
     ffi::OsString,
     os::windows::ffi::OsStringExt,
@@ -22,7 +23,7 @@ use winapi::{
     },
 };
 
-use crate::event::Event;
+use crate::event::{Data, Event, WindowEvent};
 
 #[repr(C)]
 pub struct DropHandlerData {
@@ -56,43 +57,40 @@ impl DropHandler {
     pub unsafe extern "system" fn QueryInterface(
         _this: *mut unknwnbase::IUnknown, _riid: REFIID, _ppvObject: *mut *mut c_void,
     ) -> HRESULT {
-        dbg!("AAAAAAAHHHHHHHHH");
         // This function doesn't appear to be required for an `IDropTarget`.
-        // An implementation would be nice however.
         unimplemented!();
     }
 
     pub unsafe extern "system" fn AddRef(this: *mut unknwnbase::IUnknown) -> ULONG {
+        // I don't think this does anything
         let drop_handler_data = Self::from_interface(this);
         let count = drop_handler_data.refcount.fetch_add(1, Ordering::Release) + 1;
-        dbg!("AddRef", count);
         count as ULONG
     }
 
     pub unsafe extern "system" fn Release(this: *mut unknwnbase::IUnknown) -> ULONG {
+        // I don't think this does anything
         let drop_handler = Self::from_interface(this);
         let count = drop_handler.refcount.fetch_sub(1, Ordering::Release) - 1;
-        dbg!("Release", count);
         if count == 0 {
             // Destroy the underlying data
-            Box::from_raw(drop_handler as *mut DropHandlerData);
+            drop(Box::from_raw(drop_handler as *mut DropHandlerData));
         }
         count as ULONG
     }
 
+    // Implement IDropTarget
     pub unsafe extern "system" fn DragEnter(
         this: *mut IDropTarget, pDataObj: *const IDataObject, _grfKeyState: DWORD,
         _pt: *const POINTL, pdwEffect: *mut DWORD,
     ) -> HRESULT {
-        dbg!("AAAAAAAHHHHHHHHH");
         let drop_handler = Self::from_interface(this);
-        let hdrop = Self::iterate_filenames(pDataObj, |filename| {
-            // drop_handler.send_event(Event::WindowEvent {
-            //     window_id: SuperWindowId(WindowId(drop_handler.window)),
-            //     event: HoveredFile(filename),
-            // });
-        });
+        let hdrop = Self::iterate_filenames(pDataObj, |_filename| {});
+        // TODO better is_valid logic
         drop_handler.hovered_is_valid = hdrop.is_some();
+        if drop_handler.hovered_is_valid {
+            drop_handler.send_event(Event::Window(WindowEvent::DragEnter));
+        }
         drop_handler.cursor_effect =
             if drop_handler.hovered_is_valid { DROPEFFECT_COPY } else { DROPEFFECT_NONE };
         *pdwEffect = drop_handler.cursor_effect;
@@ -103,21 +101,19 @@ impl DropHandler {
     pub unsafe extern "system" fn DragOver(
         this: *mut IDropTarget, _grfKeyState: DWORD, _pt: *const POINTL, pdwEffect: *mut DWORD,
     ) -> HRESULT {
-        dbg!("AAAAAAAHHHHHHHHH");
         let drop_handler = Self::from_interface(this);
         *pdwEffect = drop_handler.cursor_effect;
+        if drop_handler.hovered_is_valid {
+            drop_handler.send_event(Event::Window(WindowEvent::Dragging));
+        }
 
         S_OK
     }
 
     pub unsafe extern "system" fn DragLeave(this: *mut IDropTarget) -> HRESULT {
-        dbg!("AAAAAAAHHHHHHHHH");
         let drop_handler = Self::from_interface(this);
         if drop_handler.hovered_is_valid {
-            // drop_handler.send_event(Event::WindowEvent {
-            //     window_id: SuperWindowId(WindowId(drop_handler.window)),
-            //     event: HoveredFileCancelled,
-            // });
+            drop_handler.send_event(Event::Window(WindowEvent::DragLeave));
         }
 
         S_OK
@@ -127,13 +123,9 @@ impl DropHandler {
         this: *mut IDropTarget, pDataObj: *const IDataObject, _grfKeyState: DWORD,
         _pt: *const POINTL, _pdwEffect: *mut DWORD,
     ) -> HRESULT {
-        dbg!("AAAAAAAHHHHHHHHH");
         let drop_handler = Self::from_interface(this);
         let hdrop = Self::iterate_filenames(pDataObj, |filename| {
-            // drop_handler.send_event(Event::WindowEvent {
-            //     window_id: SuperWindowId(WindowId(drop_handler.window)),
-            //     event: DroppedFile(filename),
-            // });
+            drop_handler.send_event(Event::Window(WindowEvent::Drop(Data::Filepath(filename))));
         });
         if let Some(hdrop) = hdrop {
             shellapi::DragFinish(hdrop);
@@ -217,7 +209,6 @@ impl DropHandlerData {
 
 impl Drop for DropHandler {
     fn drop(&mut self) {
-        dbg!("Dropping DropHandler");
         unsafe {
             DropHandler::Release(self.data as *mut unknwnbase::IUnknown);
         }

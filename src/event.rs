@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use keyboard_types::{KeyboardEvent, Modifiers};
 
 use crate::{Point, WindowInfo};
@@ -78,11 +80,21 @@ pub enum MouseEvent {
 }
 
 #[derive(Debug, Clone)]
+pub enum Data {
+    String(String),
+    Filepath(PathBuf),
+}
+
+#[derive(Debug, Clone)]
 pub enum WindowEvent {
     Resized(WindowInfo),
     Focused,
     Unfocused,
     WillClose,
+    DragEnter,
+    DragLeave,
+    Dragging,
+    Drop(Data),
 }
 
 #[derive(Debug, Clone)]
