@@ -1,17 +1,10 @@
 // Taken from https://github.com/rust-windowing/winit/blob/master/src/platform_impl/windows/drop_handler.rs
-use std::{
-    ffi::OsString,
-    os::windows::ffi::OsStringExt,
-    path::PathBuf,
-    ptr,
-    sync::atomic::{AtomicUsize, Ordering},
-};
-
+use std::sync::atomic::{AtomicUsize, Ordering};
 use winapi::{
     ctypes::c_void,
     shared::{
         guiddef::REFIID,
-        minwindef::{DWORD, UINT, ULONG},
+        minwindef::{DWORD, ULONG},
         windef::{HWND, POINTL},
         winerror::S_OK,
     },
@@ -23,7 +16,8 @@ use winapi::{
     },
 };
 
-use crate::event::{Data, Event, WindowEvent};
+use super::data::*;
+use crate::event::{Event, WindowEvent};
 
 #[repr(C)]
 pub struct DropHandlerData {
@@ -85,7 +79,7 @@ impl DropHandler {
         _pt: *const POINTL, pdwEffect: *mut DWORD,
     ) -> HRESULT {
         let drop_handler = Self::from_interface(this);
-        let hdrop = Self::iterate_filenames(pDataObj, |_filename| {});
+        let hdrop = get_drop_data(pDataObj, |_data| {});
         // TODO better is_valid logic
         drop_handler.hovered_is_valid = hdrop.is_some();
         if drop_handler.hovered_is_valid {
@@ -124,8 +118,8 @@ impl DropHandler {
         _pt: *const POINTL, _pdwEffect: *mut DWORD,
     ) -> HRESULT {
         let drop_handler = Self::from_interface(this);
-        let hdrop = Self::iterate_filenames(pDataObj, |filename| {
-            drop_handler.send_event(Event::Window(WindowEvent::Drop(Data::Filepath(filename))));
+        let hdrop = get_drop_data(pDataObj, |data| {
+            drop_handler.send_event(Event::Window(WindowEvent::Drop(data)));
         });
         if let Some(hdrop) = hdrop {
             shellapi::DragFinish(hdrop);
@@ -136,68 +130,6 @@ impl DropHandler {
 
     unsafe fn from_interface<'a, InterfaceT>(this: *mut InterfaceT) -> &'a mut DropHandlerData {
         &mut *(this as *mut _)
-    }
-
-    unsafe fn iterate_filenames<F>(
-        data_obj: *const IDataObject, callback: F,
-    ) -> Option<shellapi::HDROP>
-    where
-        F: Fn(PathBuf),
-    {
-        use winapi::{
-            shared::{
-                winerror::{DV_E_FORMATETC, SUCCEEDED},
-                wtypes::{CLIPFORMAT, DVASPECT_CONTENT},
-            },
-            um::{
-                objidl::{FORMATETC, TYMED_HGLOBAL},
-                shellapi::DragQueryFileW,
-                winuser::CF_HDROP,
-            },
-        };
-
-        let drop_format = FORMATETC {
-            cfFormat: CF_HDROP as CLIPFORMAT,
-            ptd: ptr::null(),
-            dwAspect: DVASPECT_CONTENT,
-            lindex: -1,
-            tymed: TYMED_HGLOBAL,
-        };
-
-        let mut medium = std::mem::zeroed();
-        let get_data_result = (*data_obj).GetData(&drop_format, &mut medium);
-        if SUCCEEDED(get_data_result) {
-            let hglobal = (*medium.u).hGlobal();
-            let hdrop = (*hglobal) as shellapi::HDROP;
-
-            // The second parameter (0xFFFFFFFF) instructs the function to return the item count
-            let item_count = DragQueryFileW(hdrop, 0xFFFFFFFF, ptr::null_mut(), 0);
-
-            for i in 0..item_count {
-                // Get the length of the path string NOT including the terminating null character.
-                // Previously, this was using a fixed size array of MAX_PATH length, but the
-                // Windows API allows longer paths under certain circumstances.
-                let character_count = DragQueryFileW(hdrop, i, ptr::null_mut(), 0) as usize;
-                let str_len = character_count + 1;
-
-                // Fill path_buf with the null-terminated file name
-                let mut path_buf = Vec::with_capacity(str_len);
-                DragQueryFileW(hdrop, i, path_buf.as_mut_ptr(), str_len as UINT);
-                path_buf.set_len(str_len);
-
-                callback(OsString::from_wide(&path_buf[0..character_count]).into());
-            }
-
-            Some(hdrop)
-        } else if get_data_result == DV_E_FORMATETC {
-            // If the dropped item is not a file this error will occur.
-            // In this case it is OK to return without taking further action.
-            println!("Error occured while processing dropped/hovered item: item is not a file.");
-            None
-        } else {
-            println!("Unexpected error occured while processing dropped/hovered item.");
-            None
-        }
     }
 }
 
