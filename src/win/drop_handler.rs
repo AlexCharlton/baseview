@@ -56,14 +56,12 @@ impl DropHandler {
     }
 
     pub unsafe extern "system" fn AddRef(this: *mut unknwnbase::IUnknown) -> ULONG {
-        // I don't think this does anything
         let drop_handler_data = Self::from_interface(this);
         let count = drop_handler_data.refcount.fetch_add(1, Ordering::Release) + 1;
         count as ULONG
     }
 
     pub unsafe extern "system" fn Release(this: *mut unknwnbase::IUnknown) -> ULONG {
-        // I don't think this does anything
         let drop_handler = Self::from_interface(this);
         let count = drop_handler.refcount.fetch_sub(1, Ordering::Release) - 1;
         if count == 0 {

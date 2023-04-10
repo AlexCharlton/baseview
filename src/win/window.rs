@@ -289,7 +289,11 @@ unsafe fn wnd_proc_inner(
             let mut window = crate::Window::new(&mut window);
 
             if wparam == WIN_FRAME_TIMER {
-                window_state.handler.borrow_mut().as_mut().unwrap().on_frame(&mut window);
+                if let Ok(mut h) = window_state.handler.try_borrow_mut() {
+                    h.as_mut().unwrap().on_frame(&mut window);
+                } else {
+                    dbg!("Can't process frame");
+                }
             }
 
             Some(0)
