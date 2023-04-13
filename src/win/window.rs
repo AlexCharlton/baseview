@@ -34,7 +34,7 @@ use raw_window_handle::{
 const BV_WINDOW_MUST_CLOSE: UINT = WM_USER + 1;
 
 use crate::{
-    Event, MouseButton, MouseEvent, PhyPoint, PhySize, ScrollDelta, Size, WindowEvent,
+    Data, Event, MouseButton, MouseEvent, PhyPoint, PhySize, ScrollDelta, Size, WindowEvent,
     WindowHandler, WindowInfo, WindowOpenOptions, WindowScalePolicy,
 };
 
@@ -292,7 +292,7 @@ unsafe fn wnd_proc_inner(
                 if let Ok(mut h) = window_state.handler.try_borrow_mut() {
                     h.as_mut().unwrap().on_frame(&mut window);
                 } else {
-                    dbg!("Can't process frame");
+                    println!("Warning: baseview: Can't process frame");
                 }
             }
 
@@ -521,6 +521,9 @@ impl WindowState {
                     )
                 };
             }
+            WindowTask::Drag(data) => {
+                super::drag::start_drag(data);
+            }
         }
     }
 }
@@ -532,6 +535,8 @@ enum WindowTask {
     /// Resize the window to the given size. The size is in logical pixels. DPI scaling is applied
     /// automatically.
     Resize(Size),
+    /// Start a drag event
+    Drag(Data),
 }
 
 pub struct Window<'a> {
@@ -795,6 +800,13 @@ impl Window<'_> {
         // To avoid reentrant event handler calls we'll defer the actual resizing until after the
         // event has been handled
         let task = WindowTask::Resize(size);
+        self.state.deferred_tasks.borrow_mut().push_back(task);
+    }
+
+    pub fn start_drag(&self, data: Data) {
+        // To avoid reentrant event handler calls we'll defer the actual resizing until after the
+        // event has been handled
+        let task = WindowTask::Drag(data);
         self.state.deferred_tasks.borrow_mut().push_back(task);
     }
 

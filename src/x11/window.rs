@@ -14,8 +14,8 @@ use xcb::StructPtr;
 
 use super::XcbConnection;
 use crate::{
-    Event, MouseButton, MouseCursor, MouseEvent, PhyPoint, PhySize, ScrollDelta, Size, WindowEvent,
-    WindowHandler, WindowInfo, WindowOpenOptions, WindowScalePolicy,
+    Data, Event, MouseButton, MouseCursor, MouseEvent, PhyPoint, PhySize, ScrollDelta, Size,
+    WindowEvent, WindowHandler, WindowInfo, WindowOpenOptions, WindowScalePolicy,
 };
 
 use super::keyboard::{convert_key_press_event, convert_key_release_event, key_mods};
@@ -412,6 +412,10 @@ impl Window {
     #[cfg(feature = "opengl")]
     pub fn gl_context(&self) -> Option<&crate::gl::GlContext> {
         self.gl_context.as_ref()
+    }
+
+    pub fn start_drag(&self, data: Data) {
+        todo!()
     }
 
     fn find_visual_for_depth(screen: &StructPtr<xcb_screen_t>, depth: u8) -> Option<u32> {

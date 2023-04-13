@@ -23,7 +23,7 @@ use raw_window_handle::{
 };
 
 use crate::{
-    Event, EventStatus, Size, WindowEvent, WindowHandler, WindowInfo, WindowOpenOptions,
+    Data, Event, EventStatus, Size, WindowEvent, WindowHandler, WindowInfo, WindowOpenOptions,
     WindowScalePolicy,
 };
 
@@ -339,6 +339,10 @@ impl Window {
         if let Some(ns_window) = self.ns_window {
             unsafe { NSWindow::setContentSize_(ns_window, size) };
         }
+    }
+
+    pub fn start_drag(&self, data: Data) {
+        todo!()
     }
 
     #[cfg(feature = "opengl")]

@@ -2,11 +2,10 @@
 // used as a reference
 
 use windows::{
-    core::{implement, Interface, HRESULT, PCWSTR},
+    core::{implement, HRESULT},
     Win32::{
         Foundation::{
-            BOOL, COLORREF, DRAGDROP_S_CANCEL, DRAGDROP_S_DROP, DRAGDROP_S_USEDEFAULTCURSORS, HWND,
-            SIZE, S_OK,
+            BOOL, DRAGDROP_S_CANCEL, DRAGDROP_S_DROP, DRAGDROP_S_USEDEFAULTCURSORS, S_OK,
         },
         System::{
             Ole::{
@@ -22,16 +21,17 @@ use super::data_object::*;
 use crate::event::Data;
 
 pub fn start_drag(data: Data) {
-    dbg!(data);
+    // TODO: Why after starting, does event handling seem screwy?
+    // TODO implement IDataObjectAsyncCapability for DataObject to be able to start this in a thread?
 
-    let data_object = DataObject::create(); // TODO
+    let data_object = DataObject::create(data);
     let drop_source = DropSource::create();
     let mut effects_out = DROPEFFECT_NONE;
     unsafe {
         let _ = DoDragDrop(
             &data_object,
             &drop_source,
-            DROPEFFECT_COPY,
+            DROPEFFECT_COPY, // DROPEFFECT_MOVE?
             &mut effects_out as *mut DROPEFFECT,
         );
     }

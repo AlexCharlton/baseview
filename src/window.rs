@@ -4,7 +4,7 @@ use raw_window_handle::{
     HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandle, RawWindowHandle,
 };
 
-use crate::event::{Event, EventStatus};
+use crate::event::{Data, Event, EventStatus};
 use crate::window_open_options::WindowOpenOptions;
 use crate::Size;
 
@@ -115,6 +115,10 @@ impl<'a> Window<'a> {
     /// automatically be accounted for.
     pub fn resize(&mut self, size: Size) {
         self.window.resize(size);
+    }
+
+    pub fn start_drag(&self, data: Data) {
+        self.window.start_drag(data);
     }
 
     /// If provided, then an OpenGL context will be created for this window. You'll be able to

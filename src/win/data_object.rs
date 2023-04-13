@@ -1,130 +1,144 @@
+// https://github.com/superlistapp/super_native_extensions/blob/beabd4aca7f353a94f41b635aace9e625ca89aff/super_native_extensions/rust/src/win32/drag.rs
+// used as a reference
+// Perhaps https://github.com/DenisKolodin/nativeshell/blob/bc20a943be05eadb63a7d3323279d95328744e5c/nativeshell/src/shell/platform/win32/drag_context.rs#L83 may provide some ideas as well
+
 use windows::{
-    core::{implement, HRESULT, HSTRING},
+    core::implement,
     Win32::{
         Foundation::{
-            BOOL, DATA_S_SAMEFORMATETC, DV_E_FORMATETC, E_NOTIMPL, E_OUTOFMEMORY,
-            OLE_E_ADVISENOTSUPPORTED, S_FALSE, S_OK,
+            DATA_S_SAMEFORMATETC, DV_E_FORMATETC, E_NOTIMPL, E_OUTOFMEMORY, HGLOBAL,
+            OLE_E_ADVISENOTSUPPORTED, POINT, S_FALSE, S_OK,
         },
         System::{
             Com::{
-                IBindCtx, IDataObject, IDataObject_Impl, IStream, DATADIR_GET, FORMATETC,
-                STGMEDIUM, STGMEDIUM_0, STREAM_SEEK_END, STREAM_SEEK_SET, TYMED, TYMED_HGLOBAL,
-                TYMED_ISTREAM,
+                IDataObject, IDataObject_Impl, DATADIR_GET, FORMATETC, STGMEDIUM, STGMEDIUM_0,
+                STREAM_SEEK_END, TYMED_HGLOBAL, TYMED_ISTREAM,
             },
-            // Memory::{
-            //     GlobalAlloc, GlobalFree, GlobalLock, GlobalSize, GlobalUnlock, GLOBAL_ALLOC_FLAGS,
-            // },
-            Ole::{ReleaseStgMedium, CF_DIB, CF_DIBV5, CF_HDROP, DROPEFFECT},
+            Memory::{GlobalAlloc, GlobalFree, GlobalLock, GlobalUnlock, GLOBAL_ALLOC_FLAGS},
+            Ole::CF_HDROP,
         },
+        UI::Shell::{SHCreateMemStream, SHCreateStdEnumFmtEtc, DROPFILES, HDROP},
     },
 };
 
+use crate::event::Data;
+
+#[derive(Debug, Clone)]
 #[implement(IDataObject)]
-pub struct DataObject {}
+pub struct DataObject {
+    data: Data,
+}
 
 impl DataObject {
-    pub fn create() -> IDataObject {
-        let data_object = Self {};
+    pub fn create(data: Data) -> IDataObject {
+        let data_object = Self { data };
         data_object.into()
+    }
+
+    fn global_from_data(data: &[u8]) -> windows::core::Result<HGLOBAL> {
+        unsafe {
+            let global =
+                GlobalAlloc(GLOBAL_ALLOC_FLAGS(0), data.len() + std::mem::size_of::<HDROP>())?;
+            let hdrop_ptr = GlobalLock(global);
+            if hdrop_ptr.is_null() {
+                GlobalFree(global)?;
+                Err(E_OUTOFMEMORY.into())
+            } else {
+                std::ptr::copy_nonoverlapping(data.as_ptr(), hdrop_ptr as *mut u8, data.len());
+                GlobalUnlock(global);
+                Ok(global)
+            }
+        }
+    }
+
+    fn data_for_hdrop(path: &std::path::PathBuf) -> Vec<u8> {
+        let mut res = Vec::new();
+
+        let drop_files = DROPFILES {
+            pFiles: std::mem::size_of::<DROPFILES>() as u32,
+            pt: POINT { x: 0, y: 0 },
+            fNC: false.into(),
+            fWide: true.into(),
+        };
+
+        let drop_files = unsafe {
+            ::std::slice::from_raw_parts(
+                (&drop_files as *const DROPFILES) as *const u8,
+                ::std::mem::size_of::<DROPFILES>(),
+            )
+        };
+        res.extend_from_slice(drop_files);
+
+        let mut file_str: Vec<u16> =
+            path.clone().into_os_string().into_string().unwrap().encode_utf16().collect();
+        // https://learn.microsoft.com/en-us/windows/win32/shell/clipboard#cf_hdrop
+        file_str.push(0);
+        file_str.push(0); // Double null terminated
+
+        let data = unsafe {
+            ::std::slice::from_raw_parts(
+                file_str.as_ptr() as *const u8,
+                file_str.len() * ::std::mem::size_of::<u16>(),
+            )
+        };
+        res.extend_from_slice(&data[..]);
+
+        res
     }
 }
 
 impl IDataObject_Impl for DataObject {
     fn GetData(&self, pformatetcin: *const FORMATETC) -> windows::core::Result<STGMEDIUM> {
-        //     let format = unsafe { &*pformatetcin };
-        //     let format_file_descriptor = unsafe { RegisterClipboardFormatW(CFSTR_FILEDESCRIPTOR) };
-        //     let format_file_contents = unsafe { RegisterClipboardFormatW(CFSTR_FILECONTENTS) };
+        match &self.data {
+            Data::Filepath(p) => {
+                let format = unsafe { &*pformatetcin };
+                let data = Self::data_for_hdrop(p);
 
-        //     if format.cfFormat as u32 == format_file_contents {
-        //         let stream = self
-        //             .stream_for_virtual_file_index(format.lindex as usize, Self::is_local_request());
-        //         return Ok(STGMEDIUM {
-        //             tymed: TYMED_ISTREAM,
-        //             Anonymous: STGMEDIUM_0 { pstm: ManuallyDrop::new(stream) },
-        //             pUnkForRelease: windows::core::ManuallyDrop::none(),
-        //         });
-        //     }
+                if (format.tymed & TYMED_HGLOBAL.0 as u32) != 0 {
+                    let global = Self::global_from_data(&data)?;
+                    let s = STGMEDIUM {
+                        tymed: TYMED_HGLOBAL,
+                        Anonymous: STGMEDIUM_0 { hGlobal: global },
+                        pUnkForRelease: std::mem::ManuallyDrop::new(None),
+                    };
 
-        //     let needs_generate_bitmap = self.needs_synthetize_bitmap();
-
-        //     let data = self.extra_data.borrow().get(&format.cfFormat).cloned().or_else(|| {
-        //         if format.cfFormat as u32 == format_file_descriptor {
-        //             self.data_for_file_group_descritor()
-        //         } else if format.cfFormat == CF_HDROP.0 {
-        //             self.data_for_hdrop()
-        //         } else if needs_generate_bitmap && format.cfFormat == CF_DIB.0 {
-        //             self.synthetize_bitmap_data(false).ok_log()
-        //         } else if needs_generate_bitmap && format.cfFormat == CF_DIBV5.0 {
-        //             self.synthetize_bitmap_data(true).ok_log()
-        //         } else {
-        //             self.data_for_format(format.cfFormat as u32, 0)
-        //         }
-        //     });
-
-        //     // println!("DATA {:?} {:?}", data, format_to_string(format.cfFormat as u32));
-
-        //     match data {
-        //         Some(data) => {
-        //             if (format.tymed & TYMED_HGLOBAL.0 as u32) != 0 {
-        //                 let global = self.global_from_data(&data)?;
-        //                 Ok(STGMEDIUM {
-        //                     tymed: TYMED_HGLOBAL,
-        //                     Anonymous: STGMEDIUM_0 { hGlobal: global },
-        //                     pUnkForRelease: windows::core::ManuallyDrop::none(),
-        //                 })
-        //             } else if (format.tymed & TYMED_ISTREAM.0 as u32) != 0 {
-        //                 let stream = unsafe { SHCreateMemStream(Some(&data)) };
-        //                 let stream =
-        //                     stream.ok_or_else(|| windows::core::Error::from(DV_E_FORMATETC))?;
-        //                 unsafe {
-        //                     stream.Seek(0, STREAM_SEEK_END, None)?;
-        //                 }
-        //                 Ok(STGMEDIUM {
-        //                     tymed: TYMED_ISTREAM,
-        //                     Anonymous: STGMEDIUM_0 { pstm: ManuallyDrop::new(Some(stream)) },
-        //                     pUnkForRelease: windows::core::ManuallyDrop::none(),
-        //                 })
-        //             } else {
-        //                 Err(DV_E_FORMATETC.into())
-        //             }
-        //         }
-        //         None => Err(DV_E_FORMATETC.into()),
-        //     }
-        Err(DV_E_FORMATETC.into())
+                    Ok(s)
+                } else if (format.tymed & TYMED_ISTREAM.0 as u32) != 0 {
+                    let stream = unsafe { SHCreateMemStream(Some(&data)) };
+                    let stream =
+                        stream.ok_or_else(|| windows::core::Error::from(DV_E_FORMATETC))?;
+                    unsafe {
+                        stream.Seek(0, STREAM_SEEK_END, None)?;
+                    }
+                    Ok(STGMEDIUM {
+                        tymed: TYMED_ISTREAM,
+                        Anonymous: STGMEDIUM_0 { pstm: std::mem::ManuallyDrop::new(Some(stream)) },
+                        pUnkForRelease: std::mem::ManuallyDrop::new(None),
+                    })
+                } else {
+                    Err(DV_E_FORMATETC.into())
+                }
+            }
+            _ => Err(DV_E_FORMATETC.into()),
+        }
     }
 
     fn GetDataHere(
-        &self, _pformatetc: *const windows::Win32::System::Com::FORMATETC,
-        _pmedium: *mut windows::Win32::System::Com::STGMEDIUM,
+        &self, _pformatetc: *const FORMATETC, _pmedium: *mut windows::Win32::System::Com::STGMEDIUM,
     ) -> windows::core::Result<()> {
         Err(E_NOTIMPL.into())
     }
 
-    fn QueryGetData(
-        &self, pformatetc: *const windows::Win32::System::Com::FORMATETC,
-    ) -> windows::core::HRESULT {
-        // let format = unsafe { &*pformatetc };
-        // let index = self.get_formats().iter().position(|e| {
-        //     e.cfFormat == format.cfFormat
-        //         && (e.tymed & format.tymed) != 0
-        //         && e.dwAspect == format.dwAspect
-        //         && e.lindex == format.lindex
-        // });
-        // match index {
-        //     Some(_) => S_OK,
-        //     None => {
-        //         // possibly extra data
-        //         if (format.tymed == TYMED_HGLOBAL.0 as u32
-        //             || format.tymed == TYMED_ISTREAM.0 as u32)
-        //             && self.extra_data.borrow().contains_key(&format.cfFormat)
-        //         {
-        //             S_OK
-        //         } else {
-        //             S_FALSE
-        //         }
-        //     }
-        // }
-        S_FALSE
+    fn QueryGetData(&self, pformatetc: *const FORMATETC) -> windows::core::HRESULT {
+        let format = unsafe { &*pformatetc };
+        // Only supporting file drops
+        if (format.tymed == TYMED_HGLOBAL.0 as u32 || format.tymed == TYMED_ISTREAM.0 as u32)
+            && format.cfFormat == CF_HDROP.0
+        {
+            S_OK
+        } else {
+            S_FALSE
+        }
     }
 
     fn GetCanonicalFormatEtc(
@@ -137,61 +151,35 @@ impl IDataObject_Impl for DataObject {
     }
 
     fn SetData(
-        &self, pformatetc: *const windows::Win32::System::Com::FORMATETC,
-        pmedium: *const windows::Win32::System::Com::STGMEDIUM,
-        frelease: windows::Win32::Foundation::BOOL,
+        &self, _pformatetc: *const FORMATETC,
+        _pmedium: *const windows::Win32::System::Com::STGMEDIUM,
+        _frelease: windows::Win32::Foundation::BOOL,
     ) -> windows::core::Result<()> {
-        let format = unsafe { &*pformatetc };
-
-        if format.tymed == TYMED_HGLOBAL.0 as u32 {
-            // unsafe {
-            //     let medium = &*pmedium;
-            //     let size = GlobalSize(medium.Anonymous.hGlobal);
-            //     let global_data = GlobalLock(medium.Anonymous.hGlobal);
-
-            //     let v = slice::from_raw_parts(global_data as *const u8, size);
-            //     let global_data: Vec<u8> = v.into();
-
-            //     GlobalUnlock(medium.Anonymous.hGlobal);
-            //     self.extra_data.borrow_mut().insert(format.cfFormat, global_data);
-
-            //     if frelease.as_bool() {
-            //         ReleaseStgMedium(pmedium as *mut _);
-            //     }
-            // }
-
-            Ok(())
-        } else if format.tymed == TYMED_ISTREAM.0 as u32 {
-            // unsafe {
-            //     let medium = &*pmedium;
-            //     let stream = medium.Anonymous.pstm.as_ref().cloned();
-
-            //     let stream_data = if let Some(stream) = stream {
-            //         stream.Seek(0, STREAM_SEEK_SET, None)?;
-            //         read_stream_fully(stream)
-            //     } else {
-            //         Vec::new()
-            //     };
-
-            //     self.extra_data.borrow_mut().insert(format.cfFormat, stream_data);
-
-            //     if frelease.as_bool() {
-            //         ReleaseStgMedium(pmedium as *mut _);
-            //     }
-            // }
-
-            Ok(())
-        } else {
-            Err(DV_E_FORMATETC.into())
-        }
+        Err(E_NOTIMPL.into())
     }
 
     fn EnumFormatEtc(
         &self, dwdirection: u32,
     ) -> windows::core::Result<windows::Win32::System::Com::IEnumFORMATETC> {
         if dwdirection == DATADIR_GET.0 as u32 {
-            //unsafe { SHCreateStdEnumFmtEtc(&self.get_formats()) }
-            Err(E_NOTIMPL.into())
+            unsafe {
+                SHCreateStdEnumFmtEtc(&[
+                    FORMATETC {
+                        cfFormat: CF_HDROP.0,
+                        ptd: std::ptr::null_mut(),
+                        dwAspect: 1, // DVASPECT_CONTENT
+                        lindex: -1,  // -1 = all items
+                        tymed: TYMED_HGLOBAL.0 as u32,
+                    },
+                    FORMATETC {
+                        cfFormat: CF_HDROP.0,
+                        ptd: std::ptr::null_mut(),
+                        dwAspect: 1, // DVASPECT_CONTENT
+                        lindex: -1,  // -1 = all items
+                        tymed: TYMED_ISTREAM.0 as u32,
+                    },
+                ])
+            }
         } else {
             Err(E_NOTIMPL.into())
         }

@@ -6,7 +6,6 @@ mod win;
 mod x11;
 
 mod clipboard;
-mod drag;
 mod event;
 mod keyboard;
 mod mouse_cursor;
@@ -18,7 +17,6 @@ mod window_open_options;
 pub mod gl;
 
 pub use clipboard::*;
-pub use drag::*;
 pub use event::*;
 pub use mouse_cursor::MouseCursor;
 pub use window::*;

@@ -16,7 +16,6 @@ where
 {
     iterate_filenames(data_obj, callback)
 }
-
 unsafe fn iterate_filenames<F>(data_obj: *const IDataObject, callback: F) -> Option<shellapi::HDROP>
 where
     F: Fn(Data),
@@ -44,8 +43,11 @@ where
     let mut medium = std::mem::zeroed();
     let get_data_result = (*data_obj).GetData(&drop_format, &mut medium);
     if SUCCEEDED(get_data_result) {
-        let hglobal = (*medium.u).hGlobal();
-        let hdrop = (*hglobal) as shellapi::HDROP;
+        // This works for data dropped from windows explorer, but its hGlobal contains a pointer
+        // That points to a
+        // let hglobal = (*medium.u).hGlobal();
+        // let hdrop = (*hglobal) as shellapi::HDROP;
+        let hdrop = (medium.u) as shellapi::HDROP;
 
         // The second parameter (0xFFFFFFFF) instructs the function to return the item count
         let item_count = DragQueryFileW(hdrop, 0xFFFFFFFF, ptr::null_mut(), 0);
@@ -77,3 +79,33 @@ where
         None
     }
 }
+
+// Debugging methods
+// fn print_bytes<T>(value: &T) {
+//     let value_bytes: &[u8] = unsafe {
+//         std::slice::from_raw_parts(value as *const _ as *const u8, std::mem::size_of::<T>())
+//     };
+
+//     println!("{}", std::any::type_name::<T>());
+//     for (i, b) in value_bytes.iter().enumerate() {
+//         print!("{:02x} ", b); // print byte in hexadecimal with leading 0
+//         if (i + 1) % 8 == 0 {
+//             // print 8 bytes per line
+//             println!();
+//         }
+//     }
+//     println!();
+// }
+
+// pub fn print_su8(bytes: &[u8]) {
+//     for b in bytes {
+//         print!("{:02x} ", b);
+//     }
+//     println!();
+// }
+// pub fn print_su16(bytes: &[u16]) {
+//     for b in bytes {
+//         print!("{:02x} ", b);
+//     }
+//     println!();
+// }
