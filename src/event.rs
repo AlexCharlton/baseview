@@ -91,7 +91,7 @@ pub enum WindowEvent {
     Focused,
     Unfocused,
     WillClose,
-    DragEnter,
+    DragEnter(Data),
     DragLeave,
     Dragging,
     Drop(Data),

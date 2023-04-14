@@ -77,12 +77,11 @@ impl DropHandler {
         _pt: *const POINTL, pdwEffect: *mut DWORD,
     ) -> HRESULT {
         let drop_handler = Self::from_interface(this);
-        let hdrop = get_drop_data(pDataObj, |_data| {});
         // TODO better is_valid logic
+        let hdrop = get_drop_data(pDataObj, |data| {
+            drop_handler.send_event(Event::Window(WindowEvent::DragEnter(data)));
+        });
         drop_handler.hovered_is_valid = hdrop.is_some();
-        if drop_handler.hovered_is_valid {
-            drop_handler.send_event(Event::Window(WindowEvent::DragEnter));
-        }
         drop_handler.cursor_effect =
             if drop_handler.hovered_is_valid { DROPEFFECT_COPY } else { DROPEFFECT_NONE };
         *pdwEffect = drop_handler.cursor_effect;
