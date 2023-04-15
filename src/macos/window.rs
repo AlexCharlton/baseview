@@ -491,9 +491,9 @@ unsafe impl HasRawWindowHandle for Window {
     }
 }
 
-unsafe impl HasRawDisplayHandle for Window<'_> {
+unsafe impl HasRawDisplayHandle for Window {
     fn raw_display_handle(&self) -> RawDisplayHandle {
-        let mut handle = AppKitDisplayHandle::empty();
+        let handle = AppKitDisplayHandle::empty();
 
         RawDisplayHandle::AppKit(handle)
     }
