@@ -680,11 +680,24 @@ impl Window<'_> {
             let drop_handler_window_handler = handler.clone();
             let drop_handler = DropHandler::new(
                 hwnd,
-                Box::new(move |e| {
+                Box::new(move |e, p| {
                     let window_state_ptr =
                         GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut WindowState;
                     let mut window = (*window_state_ptr).create_window();
                     let mut window = crate::Window::new(&mut window);
+                    if let Some(p) = p {
+                        let logical_pos = p.to_logical(&window.window.state.window_info.borrow());
+                        let event = Event::Mouse(MouseEvent::CursorMoved {
+                            position: logical_pos,
+                            modifiers: keyboard_types::Modifiers::empty(),
+                        });
+
+                        drop_handler_window_handler
+                            .borrow_mut()
+                            .as_mut()
+                            .unwrap()
+                            .on_event(&mut window, event);
+                    }
                     drop_handler_window_handler
                         .borrow_mut()
                         .as_mut()
