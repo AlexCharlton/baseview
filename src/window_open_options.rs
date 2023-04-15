@@ -22,6 +22,9 @@ pub struct WindowOpenOptions {
     /// The dpi scaling policy
     pub scale: WindowScalePolicy,
 
+    /// Callback that determines if the drop target is valid
+    pub drop_target_valid: Option<Box<dyn Fn() -> bool>>,
+
     /// If provided, then an OpenGL context will be created for this window. You'll be able to
     /// access this context through [crate::Window::gl_context].
     #[cfg(feature = "opengl")]

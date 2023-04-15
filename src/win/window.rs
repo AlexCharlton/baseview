@@ -601,7 +601,7 @@ impl Window<'_> {
     }
 
     fn open<H, B>(
-        parented: bool, parent: HWND, options: WindowOpenOptions, build: B,
+        parented: bool, parent: HWND, mut options: WindowOpenOptions, build: B,
     ) -> (WindowHandle, HWND)
     where
         H: WindowHandler + 'static,
@@ -704,6 +704,7 @@ impl Window<'_> {
                         .unwrap()
                         .on_event(&mut window, e);
                 }),
+                options.drop_target_valid.take(),
             );
 
             let window_state = Box::new(WindowState {

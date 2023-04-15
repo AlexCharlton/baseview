@@ -25,6 +25,8 @@ pub struct DropHandlerData {
     refcount: AtomicUsize,
     window: HWND,
     send_event: Box<dyn Fn(Event, Option<crate::PhyPoint>)>,
+    // Callback that determines if the drop target is valid
+    drop_target_valid: Option<Box<dyn Fn() -> bool>>,
     cursor_effect: DWORD,
     hovered_is_valid: bool, /* If the currently hovered item is not valid there must not be any `HoveredFileCancelled` emitted */
 }
@@ -37,12 +39,14 @@ pub struct DropHandler {
 impl DropHandler {
     pub fn new(
         window: HWND, send_event: Box<dyn Fn(Event, Option<crate::PhyPoint>)>,
+        drop_target_valid: Option<Box<dyn Fn() -> bool>>,
     ) -> DropHandler {
         let data = Box::new(DropHandlerData {
             interface: IDropTarget { lpVtbl: &DROP_TARGET_VTBL as *const IDropTargetVtbl },
             refcount: AtomicUsize::new(1),
             window,
             send_event,
+            drop_target_valid,
             cursor_effect: DROPEFFECT_NONE,
             hovered_is_valid: false,
         });
@@ -85,7 +89,11 @@ impl DropHandler {
         });
         drop_handler.hovered_is_valid = hdrop.is_some();
         drop_handler.cursor_effect =
-            if drop_handler.hovered_is_valid { DROPEFFECT_COPY } else { DROPEFFECT_NONE };
+            if drop_handler.hovered_is_valid && drop_handler.drop_target_valid() {
+                DROPEFFECT_COPY
+            } else {
+                DROPEFFECT_NONE
+            };
         *pdwEffect = drop_handler.cursor_effect;
 
         S_OK
@@ -96,20 +104,22 @@ impl DropHandler {
     ) -> HRESULT {
         let drop_handler = Self::from_interface(this);
         let pt: POINTL = std::mem::transmute(pt); // Signature is incorrect
-        *pdwEffect = drop_handler.cursor_effect;
         if drop_handler.hovered_is_valid {
             drop_handler.send_event(
                 Event::Window(WindowEvent::Dragging),
                 Some(crate::PhyPoint { x: pt.x, y: pt.y }),
             );
+            drop_handler.cursor_effect =
+                if drop_handler.drop_target_valid() { DROPEFFECT_COPY } else { DROPEFFECT_NONE };
         }
+        *pdwEffect = drop_handler.cursor_effect;
 
         S_OK
     }
 
     pub unsafe extern "system" fn DragLeave(this: *mut IDropTarget) -> HRESULT {
         let drop_handler = Self::from_interface(this);
-        if drop_handler.hovered_is_valid {
+        if drop_handler.hovered_is_valid && drop_handler.drop_target_valid() {
             drop_handler.send_event(Event::Window(WindowEvent::DragLeave), None);
         }
 
@@ -121,8 +131,11 @@ impl DropHandler {
         _pt: *const POINTL, _pdwEffect: *mut DWORD,
     ) -> HRESULT {
         let drop_handler = Self::from_interface(this);
+        let drop_target_valid = drop_handler.drop_target_valid();
         let hdrop = get_drop_data(pDataObj, |data| {
-            drop_handler.send_event(Event::Window(WindowEvent::Drop(data)), None);
+            if drop_target_valid {
+                drop_handler.send_event(Event::Window(WindowEvent::Drop(data)), None);
+            }
         });
         if let Some(hdrop) = hdrop {
             shellapi::DragFinish(hdrop);
@@ -139,6 +152,14 @@ impl DropHandler {
 impl DropHandlerData {
     fn send_event(&self, event: Event, pt: Option<crate::PhyPoint>) {
         (self.send_event)(event, pt);
+    }
+
+    fn drop_target_valid(&self) -> bool {
+        if let Some(f) = &self.drop_target_valid {
+            (f)()
+        } else {
+            true
+        }
     }
 }
 

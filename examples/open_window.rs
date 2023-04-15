@@ -48,6 +48,7 @@ fn main() {
         title: "baseview".into(),
         size: baseview::Size::new(512.0, 512.0),
         scale: WindowScalePolicy::SystemScaleFactor,
+        drop_target_valid: None,
 
         // TODO: Add an example that uses the OpenGL context
         #[cfg(feature = "opengl")]
