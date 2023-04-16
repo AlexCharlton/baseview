@@ -23,7 +23,7 @@ pub struct WindowOpenOptions {
     pub scale: WindowScalePolicy,
 
     /// Callback that determines if the drop target is valid
-    pub drop_target_valid: Option<Box<dyn Fn() -> bool>>,
+    pub drop_target_valid: Option<Box<dyn Fn() -> bool + Send + Sync>>,
 
     /// If provided, then an OpenGL context will be created for this window. You'll be able to
     /// access this context through [crate::Window::gl_context].
