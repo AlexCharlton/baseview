@@ -1,8 +1,8 @@
 use std::ffi::c_void;
 
-use cocoa::appkit::{NSEvent, NSView, NSWindow};
+use cocoa::appkit::{NSEvent, NSFilenamesPboardType, NSView, NSWindow};
 use cocoa::base::{id, nil, BOOL, NO, YES};
-use cocoa::foundation::{NSArray, NSPoint, NSRect, NSSize};
+use cocoa::foundation::{NSArray, NSPoint, NSRect, NSSize, NSUInteger};
 
 use objc::{
     class,
@@ -13,10 +13,11 @@ use objc::{
 };
 use uuid::Uuid;
 
+use super::keyboard::from_nsstring;
 use crate::MouseEvent::{ButtonPressed, ButtonReleased};
 use crate::{
-    Event, EventStatus, MouseButton, MouseEvent, Point, ScrollDelta, Size, WindowEvent, WindowInfo,
-    WindowOpenOptions,
+    Data, Event, EventStatus, MouseButton, MouseEvent, Point, ScrollDelta, Size, WindowEvent,
+    WindowInfo, WindowOpenOptions,
 };
 
 use super::keyboard::make_modifiers;
@@ -105,6 +106,11 @@ pub(super) unsafe fn create_view(window_options: &WindowOpenOptions) -> id {
 
     view.initWithFrame_(NSRect::new(NSPoint::new(0., 0.), NSSize::new(size.width, size.height)));
 
+    let _: id = msg_send![
+        view,
+        registerForDraggedTypes: NSArray::arrayWithObjects(nil, &[NSFilenamesPboardType])
+    ];
+
     view
 }
 
@@ -154,6 +160,11 @@ unsafe fn create_view_class() -> &'static Class {
         view_did_change_backing_properties as extern "C" fn(&Object, Sel, id),
     );
     class.add_method(sel!(setFrameSize:), set_frame_size as extern "C" fn(&Object, Sel, NSSize));
+
+    class.add_method(
+        sel!(draggingEntered:),
+        dragging_entered as extern "C" fn(&Object, Sel, id) -> NSUInteger,
+    );
 
     add_mouse_button_class_method!(class, mouseDown, ButtonPressed, MouseButton::Left);
     add_mouse_button_class_method!(class, mouseUp, ButtonReleased, MouseButton::Left);
@@ -389,4 +400,37 @@ extern "C" fn scroll_wheel(this: &Object, _: Sel, event: id) {
         delta,
         modifiers: make_modifiers(modifiers),
     }));
+}
+
+unsafe fn get_drag_data(dragging_info: id) -> Vec<Data> {
+    let mut ret: Vec<Data> = vec![];
+    if dragging_info == nil {
+        return ret;
+    }
+
+    let pasteboard: id = msg_send![dragging_info, draggingPasteboard];
+    let file_list: id = msg_send![pasteboard, propertyListForType: NSFilenamesPboardType];
+
+    if file_list == nil {
+        return ret;
+    }
+
+    let count = NSArray::count(file_list);
+    if count > 0 {
+        let data = NSArray::objectAtIndex(file_list, 0);
+        ret.push(Data::Filepath(from_nsstring(data).into()));
+    }
+
+    ret
+}
+
+extern "C" fn dragging_entered(this: &Object, _sel: Sel, dragging_info: id) -> NSUInteger {
+    unsafe {
+        let mut data = get_drag_data(dragging_info);
+        let state: &mut WindowState = WindowState::from_field(this);
+        for d in data.drain(..) {
+            state.trigger_event(Event::Window(WindowEvent::DragEnter(d)));
+        }
+    }
+    4 // NSDragOperationGeneric
 }
