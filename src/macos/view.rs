@@ -161,10 +161,24 @@ unsafe fn create_view_class() -> &'static Class {
     );
     class.add_method(sel!(setFrameSize:), set_frame_size as extern "C" fn(&Object, Sel, NSSize));
 
+    // DND methods
     class.add_method(
         sel!(draggingEntered:),
         dragging_entered as extern "C" fn(&Object, Sel, id) -> NSUInteger,
     );
+    class.add_method(
+        sel!(prepareForDragOperation:),
+        prepare_for_drag_operation as extern "C" fn(&Object, Sel, id) -> BOOL,
+    );
+    class.add_method(
+        sel!(performDragOperation:),
+        perform_drag_operation as extern "C" fn(&Object, Sel, id) -> BOOL,
+    );
+    class.add_method(
+        sel!(draggingUpdated:),
+        dragging_updated as extern "C" fn(&Object, Sel, id) -> NSUInteger,
+    );
+    class.add_method(sel!(draggingExited:), dragging_exited as extern "C" fn(&Object, Sel, id));
 
     add_mouse_button_class_method!(class, mouseDown, ButtonPressed, MouseButton::Left);
     add_mouse_button_class_method!(class, mouseUp, ButtonReleased, MouseButton::Left);
@@ -402,35 +416,78 @@ extern "C" fn scroll_wheel(this: &Object, _: Sel, event: id) {
     }));
 }
 
-unsafe fn get_drag_data(dragging_info: id) -> Vec<Data> {
+unsafe fn get_drag_data(this: &Object, dragging_info: id) -> (Vec<Data>, Point) {
     let mut ret: Vec<Data> = vec![];
     if dragging_info == nil {
-        return ret;
+        return (ret, Point::new(0.0, 0.0));
     }
 
     let pasteboard: id = msg_send![dragging_info, draggingPasteboard];
     let file_list: id = msg_send![pasteboard, propertyListForType: NSFilenamesPboardType];
 
     if file_list == nil {
-        return ret;
+        return (ret, Point::new(0.0, 0.0));
     }
 
     let count = NSArray::count(file_list);
-    if count > 0 {
-        let data = NSArray::objectAtIndex(file_list, 0);
+    for i in 0..count {
+        let data = NSArray::objectAtIndex(file_list, i);
         ret.push(Data::Filepath(from_nsstring(data).into()));
     }
 
-    ret
+    let point: NSPoint = msg_send![dragging_info, draggingLocation];
+
+    (ret, Point::new(point.x, point.y))
 }
 
 extern "C" fn dragging_entered(this: &Object, _sel: Sel, dragging_info: id) -> NSUInteger {
     unsafe {
-        let mut data = get_drag_data(dragging_info);
+        let (mut data, _) = get_drag_data(this, dragging_info);
         let state: &mut WindowState = WindowState::from_field(this);
         for d in data.drain(..) {
             state.trigger_event(Event::Window(WindowEvent::DragEnter(d)));
         }
     }
     4 // NSDragOperationGeneric
+}
+
+extern "C" fn dragging_updated(this: &Object, _sel: Sel, dragging_info: id) -> NSUInteger {
+    unsafe {
+        let (data, p) = get_drag_data(this, dragging_info);
+        if !data.is_empty() {
+            let state = WindowState::from_field(this);
+            state.trigger_event(Event::Mouse(MouseEvent::CursorMoved {
+                position: p,
+                modifiers: keyboard_types::Modifiers::empty(),
+            }));
+
+            state.trigger_event(Event::Window(WindowEvent::Dragging));
+        }
+    }
+    4 // NSDragOperationGeneric
+}
+
+extern "C" fn prepare_for_drag_operation(_this: &Object, _sel: Sel, _dragging_info: id) -> BOOL {
+    YES
+}
+
+extern "C" fn perform_drag_operation(this: &Object, _sel: Sel, dragging_info: id) -> BOOL {
+    unsafe {
+        let (mut data, _) = get_drag_data(this, dragging_info);
+        let state: &mut WindowState = WindowState::from_field(this);
+        for d in data.drain(..) {
+            state.trigger_event(Event::Window(WindowEvent::Drop(d)));
+        }
+    }
+    YES
+}
+
+extern "C" fn dragging_exited(this: &Object, _sel: Sel, dragging_info: id) {
+    unsafe {
+        let (data, _) = get_drag_data(this, dragging_info);
+        if !data.is_empty() {
+            let state = WindowState::from_field(this);
+            state.trigger_event(Event::Window(WindowEvent::DragLeave));
+        }
+    }
 }
