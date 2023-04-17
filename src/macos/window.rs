@@ -240,6 +240,7 @@ impl Window {
                 rect,
                 NSWindowStyleMask::NSTitledWindowMask
                     | NSWindowStyleMask::NSClosableWindowMask
+                    | NSWindowStyleMask::NSResizableWindowMask
                     | NSWindowStyleMask::NSMiniaturizableWindowMask,
                 NSBackingStoreBuffered,
                 NO,

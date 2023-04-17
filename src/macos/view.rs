@@ -153,6 +153,7 @@ unsafe fn create_view_class() -> &'static Class {
         sel!(viewDidChangeBackingProperties:),
         view_did_change_backing_properties as extern "C" fn(&Object, Sel, id),
     );
+    class.add_method(sel!(setFrameSize:), set_frame_size as extern "C" fn(&Object, Sel, NSSize));
 
     add_mouse_button_class_method!(class, mouseDown, ButtonPressed, MouseButton::Left);
     add_mouse_button_class_method!(class, mouseUp, ButtonReleased, MouseButton::Left);
@@ -251,6 +252,23 @@ extern "C" fn view_did_change_backing_properties(this: &Object, _: Sel, _: id) {
             state.window_info = new_window_info;
             state.trigger_event(Event::Window(WindowEvent::Resized(new_window_info)));
         }
+    }
+}
+
+extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
+    unsafe {
+        let ns_window: *mut Object = msg_send![this, window];
+        let scale_factor: f64 =
+            if ns_window.is_null() { 1.0 } else { NSWindow::backingScaleFactor(ns_window) };
+        let state: &mut WindowState = WindowState::from_field(this);
+        let new_window_info =
+            WindowInfo::from_logical_size(Size::new(size.width, size.height), scale_factor);
+
+        state.window_info = new_window_info;
+        state.trigger_event(Event::Window(WindowEvent::Resized(new_window_info)));
+
+        let superclass = msg_send![this, superclass];
+        let () = msg_send![super(this, superclass), setFrameSize: size];
     }
 }
 
