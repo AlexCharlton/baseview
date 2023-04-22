@@ -292,7 +292,7 @@ unsafe fn wnd_proc_inner(
                 if let Ok(mut h) = window_state.handler.try_borrow_mut() {
                     h.as_mut().unwrap().on_frame(&mut window);
                 } else {
-                    println!("Warning: baseview: Can't process frame");
+                    //println!("Warning: baseview: Can't process frame");
                 }
             }
 
