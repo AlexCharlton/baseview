@@ -11,7 +11,7 @@ authors = [
     "Joakim Frostegård <joakim.frostegard@gmail.com>",
     "Robbert van der Helm <mail@robbertvanderhelm.nl>",
 ]
-edition = "2018"
+edition = "2021"
 license = "MIT OR Apache-2.0"
 
 [features]
@@ -36,7 +36,8 @@ uuid = { version = "0.8", features = ["v4"], optional = true }
 [target.'cfg(target_os="macos")'.dependencies]
 cocoa = "0.24.0"
 core-foundation = "0.9.1"
-objc = "0.2.7"
+#objc = { version = "0.2.7", features = ["exception"] }
+objc = { version = "0.2.7" }
 uuid = { version = "0.8", features = ["v4"] }
 
 [dev-dependencies]

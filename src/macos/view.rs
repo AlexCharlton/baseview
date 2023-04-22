@@ -2,13 +2,14 @@ use std::ffi::c_void;
 
 use cocoa::appkit::{NSEvent, NSFilenamesPboardType, NSView, NSWindow};
 use cocoa::base::{id, nil, BOOL, NO, YES};
-use cocoa::foundation::{NSArray, NSPoint, NSRect, NSSize, NSUInteger};
+use cocoa::foundation::{NSArray, NSInteger, NSPoint, NSRect, NSSize, NSUInteger};
 
 use objc::{
     class,
     declare::ClassDecl,
     msg_send,
-    runtime::{Class, Object, Sel},
+    rc::StrongPtr,
+    runtime::{Class, Object, Protocol, Sel},
     sel, sel_impl,
 };
 use uuid::Uuid;
@@ -22,6 +23,23 @@ use crate::{
 
 use super::keyboard::make_modifiers;
 use super::window::WindowState;
+
+pub type NSDragOperation = NSUInteger;
+#[allow(non_upper_case_globals)]
+pub const NSDragOperationNone: NSDragOperation = 0;
+#[allow(non_upper_case_globals)]
+pub const NSDragOperationCopy: NSDragOperation = 1;
+#[allow(non_upper_case_globals)]
+pub const NSDragOperationGeneric: NSDragOperation = 4;
+// #[allow(non_upper_case_globals)]
+// pub const NSDragOperationLink: NSDragOperation = 2;
+// #[allow(non_upper_case_globals)]
+// pub const NSDragOperationMove: NSDragOperation = 16;
+
+#[allow(non_upper_case_globals)]
+pub const NSDraggingContextOutsideApplication: NSInteger = 0;
+#[allow(non_upper_case_globals)]
+pub const NSDraggingContextWithinApplication: NSInteger = 1;
 
 /// Name of the field used to store the `WindowState` pointer.
 pub(super) const BASEVIEW_STATE_IVAR: &str = "baseview_state";
@@ -179,8 +197,17 @@ unsafe fn create_view_class() -> &'static Class {
         dragging_updated as extern "C" fn(&Object, Sel, id) -> NSUInteger,
     );
     class.add_method(sel!(draggingExited:), dragging_exited as extern "C" fn(&Object, Sel, id));
+    if let Some(protocol) = Protocol::get("NSDraggingSource") {
+        class.add_protocol(protocol);
+    }
+    class.add_method(
+        sel!(draggingSession:sourceOperationMaskForDraggingContext:),
+        source_operation_mask_for_dragging_context
+            as extern "C" fn(&mut Object, Sel, id, NSInteger) -> NSDragOperation,
+    );
 
-    add_mouse_button_class_method!(class, mouseDown, ButtonPressed, MouseButton::Left);
+    class.add_method(sel!(mouseDown:), mouse_down as extern "C" fn(&Object, Sel, id));
+
     add_mouse_button_class_method!(class, mouseUp, ButtonReleased, MouseButton::Left);
     add_mouse_button_class_method!(class, rightMouseDown, ButtonPressed, MouseButton::Right);
     add_mouse_button_class_method!(class, rightMouseUp, ButtonReleased, MouseButton::Right);
@@ -376,6 +403,19 @@ extern "C" fn update_tracking_areas(this: &Object, _self: Sel, _: id) {
     }
 }
 
+extern "C" fn mouse_down(this: &Object, _: Sel, event: id) {
+    unsafe {
+        let state: &mut WindowState = WindowState::from_field(this);
+        state.window.last_mouse_down.replace(Some(StrongPtr::retain(event)));
+        let modifiers = NSEvent::modifierFlags(event);
+
+        state.trigger_event(Event::Mouse(ButtonPressed {
+            button: MouseButton::Left,
+            modifiers: make_modifiers(modifiers),
+        }));
+    }
+}
+
 extern "C" fn mouse_moved(this: &Object, _sel: Sel, event: id) {
     let state: &mut WindowState = unsafe { WindowState::from_field(this) };
 
@@ -416,7 +456,7 @@ extern "C" fn scroll_wheel(this: &Object, _: Sel, event: id) {
     }));
 }
 
-unsafe fn get_drag_data(this: &Object, dragging_info: id) -> (Vec<Data>, Point) {
+unsafe fn get_drag_data(_this: &Object, dragging_info: id) -> (Vec<Data>, Point) {
     let mut ret: Vec<Data> = vec![];
     if dragging_info == nil {
         return (ret, Point::new(0.0, 0.0));
@@ -489,5 +529,16 @@ extern "C" fn dragging_exited(this: &Object, _sel: Sel, dragging_info: id) {
             let state = WindowState::from_field(this);
             state.trigger_event(Event::Window(WindowEvent::DragLeave));
         }
+    }
+}
+
+extern "C" fn source_operation_mask_for_dragging_context(
+    _this: &mut Object, _: Sel, _session: id, context: NSInteger,
+) -> NSDragOperation {
+    #[allow(non_upper_case_globals)]
+    match context {
+        NSDraggingContextWithinApplication => NSDragOperationGeneric,
+        NSDraggingContextOutsideApplication => NSDragOperationCopy,
+        _ => NSDragOperationNone,
     }
 }

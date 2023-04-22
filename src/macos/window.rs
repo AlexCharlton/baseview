@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::ffi::c_void;
 use std::marker::PhantomData;
 use std::ptr;
@@ -5,17 +6,17 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use cocoa::appkit::{
-    NSApp, NSApplication, NSApplicationActivationPolicyRegular, NSBackingStoreBuffered,
-    NSPasteboard, NSView, NSWindow, NSWindowStyleMask,
+    NSApp, NSApplication, NSApplicationActivationPolicyRegular, NSBackingStoreBuffered, NSEvent,
+    NSImage, NSPasteboard, NSView, NSWindow, NSWindowStyleMask,
 };
 use cocoa::base::{id, nil, NO, YES};
-use cocoa::foundation::{NSAutoreleasePool, NSPoint, NSRect, NSSize, NSString};
+use cocoa::foundation::{NSArray, NSAutoreleasePool, NSPoint, NSRect, NSSize, NSString, NSURL};
 use core_foundation::runloop::{
     CFRunLoop, CFRunLoopTimer, CFRunLoopTimerContext, __CFRunLoopTimer, kCFRunLoopDefaultMode,
 };
 use keyboard_types::KeyboardEvent;
 
-use objc::{msg_send, runtime::Object, sel, sel_impl};
+use objc::{class, msg_send, rc::StrongPtr, runtime::Object, sel, sel_impl};
 
 use raw_window_handle::{
     AppKitDisplayHandle, AppKitWindowHandle, HasRawDisplayHandle, HasRawWindowHandle,
@@ -112,6 +113,8 @@ pub struct Window {
     /// Our subclassed NSView
     ns_view: id,
     close_requested: bool,
+    /// Required for Drag support
+    pub(crate) last_mouse_down: RefCell<Option<StrongPtr>>,
 
     #[cfg(feature = "opengl")]
     gl_context: Option<GlContext>,
@@ -147,6 +150,7 @@ impl Window {
             ns_window: None,
             ns_view,
             close_requested: false,
+            last_mouse_down: RefCell::new(None),
 
             #[cfg(feature = "opengl")]
             gl_context: options
@@ -188,6 +192,7 @@ impl Window {
             ns_window: None,
             ns_view,
             close_requested: false,
+            last_mouse_down: RefCell::new(None),
 
             #[cfg(feature = "opengl")]
             gl_context: options
@@ -262,6 +267,7 @@ impl Window {
             ns_window: Some(ns_window),
             ns_view,
             close_requested: false,
+            last_mouse_down: RefCell::new(None),
 
             #[cfg(feature = "opengl")]
             gl_context: options
@@ -342,8 +348,65 @@ impl Window {
         }
     }
 
+    // TODO Improve me
+    fn drag_image(size: NSSize) -> StrongPtr {
+        unsafe {
+            let image = NSImage::alloc(nil).initWithSize_(size);
+            let color: id =
+                msg_send![class!(NSColor), colorWithRed:0.3 green:0.3 blue:0.3 alpha:0.5];
+            image.lockFocus();
+            let _: id =
+                msg_send![color, drawSwatchInRect: NSRect::new(NSPoint::new(0.0, 0.0), size)];
+            image.unlockFocus();
+            StrongPtr::new(image)
+        }
+    }
+
     pub fn start_drag(&self, data: Data) {
-        todo!()
+        match data {
+            Data::Filepath(p) => unsafe {
+                let size = NSSize::new(20.0, 20.0);
+                let image = Self::drag_image(size);
+
+                let file_url = NSURL::fileURLWithPath_(
+                    nil,
+                    NSString::alloc(nil)
+                        .init_str(&p.into_os_string().into_string().unwrap())
+                        .autorelease(),
+                );
+                let event = self
+                    .last_mouse_down
+                    .borrow()
+                    .as_ref()
+                    .cloned()
+                    .expect("Expected a mouse down event before dragging");
+
+                let point: NSPoint = {
+                    let point = NSEvent::locationInWindow(*event);
+                    msg_send![self.ns_view, convertPoint:point fromView:nil]
+                };
+
+                let frame = NSRect::new(
+                    NSPoint::new(point.x - (size.width / 2.0), point.y - (size.height / 2.0)),
+                    size,
+                );
+
+                let dragging_item: id = msg_send![class!(NSDraggingItem), alloc];
+                let dragging_item: id =
+                    msg_send![dragging_item, initWithPasteboardWriter: file_url];
+                let dragging_item: id = msg_send![dragging_item, autorelease];
+                let _: id = msg_send![dragging_item, setDraggingFrame: frame contents: image];
+
+                let items = NSArray::arrayWithObject(nil, dragging_item);
+                let _dragging_session: id = msg_send![
+                    self.ns_view,
+                    beginDraggingSessionWithItems: items
+                    event: *event
+                    source: self.ns_view
+                ];
+            },
+            _ => (),
+        }
     }
 
     #[cfg(feature = "opengl")]
@@ -363,7 +426,7 @@ impl Window {
 }
 
 pub(super) struct WindowState {
-    window: Window,
+    pub(crate) window: Window,
     window_handler: Box<dyn WindowHandler>,
     keyboard_state: KeyboardState,
     frame_timer: Option<CFRunLoopTimer>,
@@ -507,6 +570,6 @@ pub fn copy_to_clipboard(string: &str) {
         let ns_str = NSString::alloc(nil).init_str(string);
 
         pb.clearContents();
-        pb.setString_forType(ns_str, cocoa::appkit::NSPasteboardTypeString);
+        NSPasteboard::setString_forType(pb, ns_str, cocoa::appkit::NSPasteboardTypeString);
     }
 }
