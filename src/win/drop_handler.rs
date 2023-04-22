@@ -26,7 +26,7 @@ pub struct DropHandlerData {
     window: HWND,
     send_event: Box<dyn Fn(Event, Option<crate::PhyPoint>)>,
     // Callback that determines if the drop target is valid
-    drop_target_valid: Option<Box<dyn Fn() -> bool>>,
+    drop_target_valid: Option<Box<dyn Fn() -> bool + Send + Sync>>,
     cursor_effect: DWORD,
     hovered_is_valid: bool, /* If the currently hovered item is not valid there must not be any `HoveredFileCancelled` emitted */
 }
@@ -39,7 +39,7 @@ pub struct DropHandler {
 impl DropHandler {
     pub fn new(
         window: HWND, send_event: Box<dyn Fn(Event, Option<crate::PhyPoint>)>,
-        drop_target_valid: Option<Box<dyn Fn() -> bool>>,
+        drop_target_valid: Option<Box<dyn Fn() -> bool + Send + Sync>>,
     ) -> DropHandler {
         let data = Box::new(DropHandlerData {
             interface: IDropTarget { lpVtbl: &DROP_TARGET_VTBL as *const IDropTargetVtbl },
@@ -83,7 +83,6 @@ impl DropHandler {
         _pt: *const POINTL, pdwEffect: *mut DWORD,
     ) -> HRESULT {
         let drop_handler = Self::from_interface(this);
-        // TODO better is_valid logic
         let hdrop = get_drop_data(pDataObj, |data| {
             drop_handler.send_event(Event::Window(WindowEvent::DragEnter(data)), None);
         });
