@@ -1,20 +1,20 @@
 use winapi::shared::guiddef::GUID;
 use winapi::shared::minwindef::{ATOM, FALSE, LPARAM, LRESULT, UINT, WPARAM};
-use winapi::shared::windef::{HWND, RECT};
+use winapi::shared::windef::{HWND, POINT, RECT};
 use winapi::shared::winerror::{OLE_E_WRONGCOMPOBJ, RPC_E_CHANGED_MODE, S_OK};
 use winapi::um::combaseapi::CoCreateGuid;
 use winapi::um::winuser::{
     AdjustWindowRectEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
-    GetDpiForWindow, GetMessageW, GetWindowLongPtrW, LoadCursorW, PostMessageW, RegisterClassW,
-    ReleaseCapture, SetCapture, SetProcessDpiAwarenessContext, SetTimer, SetWindowLongPtrW,
-    SetWindowPos, TranslateMessage, UnregisterClassW, CS_OWNDC, GET_XBUTTON_WPARAM, GWLP_USERDATA,
-    IDC_ARROW, MSG, SWP_NOMOVE, SWP_NOZORDER, WHEEL_DELTA, WM_CHAR, WM_CLOSE, WM_CREATE,
-    WM_DPICHANGED, WM_INPUTLANGCHANGE, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP,
-    WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCDESTROY,
-    WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SHOWWINDOW, WM_SIZE, WM_SYSCHAR, WM_SYSKEYDOWN, WM_SYSKEYUP,
-    WM_TIMER, WM_USER, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSW, WS_CAPTION, WS_CHILD,
-    WS_CLIPSIBLINGS, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUPWINDOW, WS_SIZEBOX, WS_VISIBLE,
-    XBUTTON1, XBUTTON2,
+    GetDpiForWindow, GetMessageW, GetWindowLongPtrW, LoadCursorW, MapWindowPoints, PostMessageW,
+    RegisterClassW, ReleaseCapture, SetCapture, SetProcessDpiAwarenessContext, SetTimer,
+    SetWindowLongPtrW, SetWindowPos, TranslateMessage, UnregisterClassW, CS_OWNDC,
+    GET_XBUTTON_WPARAM, GWLP_USERDATA, IDC_ARROW, MSG, SWP_NOMOVE, SWP_NOZORDER, WHEEL_DELTA,
+    WM_CHAR, WM_CLOSE, WM_CREATE, WM_DPICHANGED, WM_INPUTLANGCHANGE, WM_KEYDOWN, WM_KEYUP,
+    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE,
+    WM_MOUSEWHEEL, WM_NCDESTROY, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SHOWWINDOW, WM_SIZE, WM_SYSCHAR,
+    WM_SYSKEYDOWN, WM_SYSKEYUP, WM_TIMER, WM_USER, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSW,
+    WS_CAPTION, WS_CHILD, WS_CLIPSIBLINGS, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUPWINDOW,
+    WS_SIZEBOX, WS_VISIBLE, XBUTTON1, XBUTTON2,
 };
 use winapi::um::{ole2, oleidl::LPDROPTARGET};
 
@@ -101,6 +101,7 @@ unsafe impl HasRawWindowHandle for WindowHandle {
 }
 
 struct ParentHandle {
+    hwnd: HWND,
     is_open: Rc<Cell<bool>>,
 }
 
@@ -114,7 +115,7 @@ impl ParentHandle {
             _phantom: PhantomData::default(),
         };
 
-        (Self { is_open }, handle)
+        (Self { hwnd, is_open }, handle)
     }
 }
 
@@ -463,7 +464,7 @@ struct WindowState {
     pub hwnd: HWND,
     window_class: ATOM,
     window_info: RefCell<WindowInfo>,
-    _parent_handle: Option<ParentHandle>,
+    parent_handle: Option<ParentHandle>,
     drop_handler: DropHandler,
     keyboard_state: RefCell<KeyboardState>,
     mouse_button_counter: Cell<usize>,
@@ -686,7 +687,18 @@ impl Window<'_> {
                     let mut window = (*window_state_ptr).create_window();
                     let mut window = crate::Window::new(&mut window);
                     if let Some(p) = p {
-                        let logical_pos = p.to_logical(&window.window.state.window_info.borrow());
+                        let mut point = p;
+                        if let Some(parent) = &window.window.state.parent_handle {
+                            // mutates point
+                            MapWindowPoints(
+                                null_mut(),
+                                window.window.state.hwnd,
+                                &mut point as *mut _ as *mut POINT,
+                                1,
+                            );
+                        }
+                        let logical_pos =
+                            point.to_logical(&window.window.state.window_info.borrow());
                         let event = Event::Mouse(MouseEvent::CursorMoved {
                             position: logical_pos,
                             modifiers: keyboard_types::Modifiers::empty(),
@@ -711,7 +723,7 @@ impl Window<'_> {
                 hwnd,
                 window_class,
                 window_info: RefCell::new(window_info),
-                _parent_handle: parent_handle,
+                parent_handle,
                 drop_handler,
                 keyboard_state: RefCell::new(KeyboardState::new()),
                 mouse_button_counter: Cell::new(0),
