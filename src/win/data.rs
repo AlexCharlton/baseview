@@ -12,13 +12,15 @@ use crate::event::Data;
 
 pub unsafe fn get_drop_data<F>(data_obj: *const IDataObject, callback: F) -> Option<shellapi::HDROP>
 where
-    F: Fn(Data),
+    F: FnMut(Data),
 {
     iterate_filenames(data_obj, callback)
 }
-unsafe fn iterate_filenames<F>(data_obj: *const IDataObject, callback: F) -> Option<shellapi::HDROP>
+unsafe fn iterate_filenames<F>(
+    data_obj: *const IDataObject, mut callback: F,
+) -> Option<shellapi::HDROP>
 where
-    F: Fn(Data),
+    F: FnMut(Data),
 {
     use winapi::{
         shared::{

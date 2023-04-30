@@ -118,9 +118,7 @@ impl DropHandler {
 
     pub unsafe extern "system" fn DragLeave(this: *mut IDropTarget) -> HRESULT {
         let drop_handler = Self::from_interface(this);
-        if drop_handler.hovered_is_valid && drop_handler.drop_target_valid() {
-            drop_handler.send_event(Event::Window(WindowEvent::DragLeave), None);
-        }
+        drop_handler.send_event(Event::Window(WindowEvent::DragLeave), None);
 
         S_OK
     }
@@ -131,13 +129,18 @@ impl DropHandler {
     ) -> HRESULT {
         let drop_handler = Self::from_interface(this);
         let drop_target_valid = drop_handler.drop_target_valid();
+        let mut dropped = false;
         let hdrop = get_drop_data(pDataObj, |data| {
             if drop_target_valid {
+                dropped = true;
                 drop_handler.send_event(Event::Window(WindowEvent::Drop(data)), None);
             }
         });
         if let Some(hdrop) = hdrop {
             shellapi::DragFinish(hdrop);
+        }
+        if !dropped {
+            drop_handler.send_event(Event::Window(WindowEvent::DragLeave), None);
         }
 
         S_OK
