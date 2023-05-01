@@ -6,7 +6,7 @@ use raw_window_handle::{
 
 use crate::event::{Data, Event, EventStatus};
 use crate::window_open_options::WindowOpenOptions;
-use crate::Size;
+use crate::{MouseCursor, Size};
 
 #[cfg(target_os = "macos")]
 use crate::macos as platform;
@@ -119,6 +119,10 @@ impl<'a> Window<'a> {
 
     pub fn start_drag(&self, data: Data) {
         self.window.start_drag(data);
+    }
+
+    pub fn set_mouse_cursor(&mut self, mouse_cursor: MouseCursor) {
+        self.window.set_mouse_cursor(mouse_cursor);
     }
 
     /// If provided, then an OpenGL context will be created for this window. You'll be able to

@@ -409,6 +409,10 @@ impl Window {
         }
     }
 
+    pub fn set_mouse_cursor(&mut self, mouse_cursor: MouseCursor) {
+        // TODO
+    }
+
     #[cfg(feature = "opengl")]
     pub fn gl_context(&self) -> Option<&GlContext> {
         self.gl_context.as_ref()

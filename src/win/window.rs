@@ -1,20 +1,22 @@
 use winapi::shared::guiddef::GUID;
 use winapi::shared::minwindef::{ATOM, FALSE, LPARAM, LRESULT, UINT, WPARAM};
-use winapi::shared::windef::{HWND, POINT, RECT};
+use winapi::shared::ntdef::PCWSTR;
+use winapi::shared::windef::{HCURSOR, HWND, POINT, RECT};
 use winapi::shared::winerror::{OLE_E_WRONGCOMPOBJ, RPC_E_CHANGED_MODE, S_OK};
 use winapi::um::combaseapi::CoCreateGuid;
 use winapi::um::winuser::{
     AdjustWindowRectEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
     GetDpiForWindow, GetMessageW, GetWindowLongPtrW, LoadCursorW, MapWindowPoints, PostMessageW,
-    RegisterClassW, ReleaseCapture, SetCapture, SetProcessDpiAwarenessContext, SetTimer,
+    RegisterClassW, ReleaseCapture, SetCapture, SetCursor, SetProcessDpiAwarenessContext, SetTimer,
     SetWindowLongPtrW, SetWindowPos, TranslateMessage, UnregisterClassW, CS_OWNDC,
-    GET_XBUTTON_WPARAM, GWLP_USERDATA, IDC_ARROW, MSG, SWP_NOMOVE, SWP_NOZORDER, WHEEL_DELTA,
-    WM_CHAR, WM_CLOSE, WM_CREATE, WM_DPICHANGED, WM_INPUTLANGCHANGE, WM_KEYDOWN, WM_KEYUP,
-    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE,
-    WM_MOUSEWHEEL, WM_NCDESTROY, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SHOWWINDOW, WM_SIZE, WM_SYSCHAR,
-    WM_SYSKEYDOWN, WM_SYSKEYUP, WM_TIMER, WM_USER, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSW,
-    WS_CAPTION, WS_CHILD, WS_CLIPSIBLINGS, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUPWINDOW,
-    WS_SIZEBOX, WS_VISIBLE, XBUTTON1, XBUTTON2,
+    GET_XBUTTON_WPARAM, GWLP_USERDATA, IDC_ARROW, IDC_CROSS, IDC_HAND, IDC_HELP, IDC_IBEAM, IDC_NO,
+    IDC_SIZEALL, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE, IDC_SIZEWE, IDC_WAIT, MSG, SWP_NOMOVE,
+    SWP_NOZORDER, WHEEL_DELTA, WM_CHAR, WM_CLOSE, WM_CREATE, WM_DPICHANGED, WM_INPUTLANGCHANGE,
+    WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
+    WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCDESTROY, WM_RBUTTONDOWN, WM_RBUTTONUP,
+    WM_SETCURSOR, WM_SHOWWINDOW, WM_SIZE, WM_SYSCHAR, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_TIMER,
+    WM_USER, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSW, WS_CAPTION, WS_CHILD, WS_CLIPSIBLINGS,
+    WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUPWINDOW, WS_SIZEBOX, WS_VISIBLE, XBUTTON1, XBUTTON2,
 };
 use winapi::um::{ole2, oleidl::LPDROPTARGET};
 
@@ -34,8 +36,8 @@ use raw_window_handle::{
 const BV_WINDOW_MUST_CLOSE: UINT = WM_USER + 1;
 
 use crate::{
-    Data, Event, MouseButton, MouseEvent, PhyPoint, PhySize, ScrollDelta, Size, WindowEvent,
-    WindowHandler, WindowInfo, WindowOpenOptions, WindowScalePolicy,
+    Data, Event, MouseButton, MouseCursor, MouseEvent, PhyPoint, PhySize, ScrollDelta, Size,
+    WindowEvent, WindowHandler, WindowInfo, WindowOpenOptions, WindowScalePolicy,
 };
 
 use super::drop_handler::DropHandler;
@@ -101,7 +103,7 @@ unsafe impl HasRawWindowHandle for WindowHandle {
 }
 
 struct ParentHandle {
-    hwnd: HWND,
+    _hwnd: HWND,
     is_open: Rc<Cell<bool>>,
 }
 
@@ -115,7 +117,7 @@ impl ParentHandle {
             _phantom: PhantomData::default(),
         };
 
-        (Self { hwnd, is_open }, handle)
+        (Self { _hwnd: hwnd, is_open }, handle)
     }
 }
 
@@ -416,6 +418,10 @@ unsafe fn wnd_proc_inner(
 
             None
         }
+        WM_SETCURSOR => {
+            SetCursor(*window_state.cursor.borrow());
+            Some(0)
+        }
         // NOTE: `WM_NCDESTROY` is handled in the outer function because this deallocates the window
         //        state
         BV_WINDOW_MUST_CLOSE => {
@@ -472,6 +478,7 @@ struct WindowState {
     handler: Rc<RefCell<Option<Box<dyn WindowHandler>>>>,
     scale_policy: WindowScalePolicy,
     dw_style: u32,
+    cursor: RefCell<HCURSOR>,
 
     /// Tasks that should be executed at the end of `wnd_proc`. This is needed to avoid mutably
     /// borrowing the fields from `WindowState` more than once. For instance, when the window
@@ -688,7 +695,7 @@ impl Window<'_> {
                     let mut window = crate::Window::new(&mut window);
                     if let Some(p) = p {
                         let mut point = p;
-                        if let Some(parent) = &window.window.state.parent_handle {
+                        if let Some(_parent) = &window.window.state.parent_handle {
                             // mutates point
                             MapWindowPoints(
                                 null_mut(),
@@ -730,6 +737,7 @@ impl Window<'_> {
                 handler,
                 scale_policy: options.scale,
                 dw_style: flags,
+                cursor: RefCell::new(LoadCursorW(null_mut(), IDC_ARROW)),
 
                 deferred_tasks: RefCell::new(VecDeque::with_capacity(4)),
 
@@ -836,6 +844,14 @@ impl Window<'_> {
         self.state.deferred_tasks.borrow_mut().push_back(task);
     }
 
+    pub fn set_mouse_cursor(&mut self, mouse_cursor: MouseCursor) {
+        unsafe {
+            let cursor = LoadCursorW(null_mut(), cursor_to_windows_cursor(mouse_cursor));
+            *self.state.cursor.borrow_mut() = cursor;
+            SetCursor(cursor);
+        }
+    }
+
     #[cfg(feature = "opengl")]
     pub fn gl_context(&self) -> Option<&GlContext> {
         self.state.gl_context.as_ref()
@@ -860,4 +876,29 @@ unsafe impl HasRawDisplayHandle for Window<'_> {
 
 pub fn copy_to_clipboard(_data: &str) {
     todo!()
+}
+
+pub fn cursor_to_windows_cursor(mouse_cursor: MouseCursor) -> PCWSTR {
+    match mouse_cursor {
+        MouseCursor::Default => IDC_ARROW,
+        MouseCursor::Hand => IDC_HAND,
+        MouseCursor::Crosshair => IDC_CROSS,
+        MouseCursor::Text | MouseCursor::VerticalText => IDC_IBEAM,
+        MouseCursor::NotAllowed => IDC_NO,
+        MouseCursor::HandGrabbing | MouseCursor::Move | MouseCursor::AllScroll => IDC_SIZEALL,
+        MouseCursor::EResize
+        | MouseCursor::WResize
+        | MouseCursor::EwResize
+        | MouseCursor::ColResize => IDC_SIZEWE,
+        MouseCursor::NResize
+        | MouseCursor::SResize
+        | MouseCursor::NsResize
+        | MouseCursor::RowResize => IDC_SIZENS,
+        MouseCursor::NeResize | MouseCursor::SwResize | MouseCursor::NeswResize => IDC_SIZENESW,
+        MouseCursor::NwResize | MouseCursor::SeResize | MouseCursor::NwseResize => IDC_SIZENWSE,
+        MouseCursor::Working => IDC_WAIT,
+        MouseCursor::Help => IDC_HELP,
+        MouseCursor::Hidden => null_mut(),
+        _ => IDC_ARROW, // use arrow for the missing cases.
+    }
 }
