@@ -240,13 +240,18 @@ impl Window {
             NSSize::new(window_info.logical_size().width, window_info.logical_size().height),
         );
 
+        let mut style_mask = NSWindowStyleMask::NSTitledWindowMask
+            | NSWindowStyleMask::NSClosableWindowMask
+            | NSWindowStyleMask::NSMiniaturizableWindowMask;
+
+        if options.resizable {
+            style_mask |= NSWindowStyleMask::NSResizableWindowMask;
+        }
+
         let ns_window = unsafe {
             let ns_window = NSWindow::alloc(nil).initWithContentRect_styleMask_backing_defer_(
                 rect,
-                NSWindowStyleMask::NSTitledWindowMask
-                    | NSWindowStyleMask::NSClosableWindowMask
-                    | NSWindowStyleMask::NSResizableWindowMask
-                    | NSWindowStyleMask::NSMiniaturizableWindowMask,
+                style_mask,
                 NSBackingStoreBuffered,
                 NO,
             );

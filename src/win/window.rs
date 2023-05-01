@@ -419,8 +419,13 @@ unsafe fn wnd_proc_inner(
             None
         }
         WM_SETCURSOR => {
-            SetCursor(*window_state.cursor.borrow());
-            Some(0)
+            let cursor = *window_state.cursor.borrow();
+            if cursor != LoadCursorW(null_mut(), IDC_ARROW) {
+                SetCursor(cursor);
+                Some(0)
+            } else {
+                None
+            }
         }
         // NOTE: `WM_NCDESTROY` is handled in the outer function because this deallocates the window
         //        state
@@ -638,19 +643,21 @@ impl Window<'_> {
                 bottom: window_info.physical_size().height as i32,
             };
 
-            let flags = if parented {
+            let mut flags = if parented {
                 WS_CHILD | WS_VISIBLE
             } else {
                 WS_POPUPWINDOW
                     | WS_CAPTION
                     | WS_VISIBLE
-                    | WS_SIZEBOX
                     | WS_MINIMIZEBOX
                     | WS_MAXIMIZEBOX
                     | WS_CLIPSIBLINGS
             };
 
             if !parented {
+                if options.resizable {
+                    flags |= WS_SIZEBOX;
+                }
                 AdjustWindowRectEx(&mut rect, flags, FALSE, 0);
             }
 
