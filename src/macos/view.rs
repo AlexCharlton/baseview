@@ -179,6 +179,8 @@ unsafe fn create_view_class() -> &'static Class {
     );
     class.add_method(sel!(setFrameSize:), set_frame_size as extern "C" fn(&Object, Sel, NSSize));
 
+    class.add_method(sel!(resetCursorRects), reset_cursor_rects as extern "C" fn(&Object, Sel));
+
     // DND methods
     class.add_method(
         sel!(draggingEntered:),
@@ -454,6 +456,17 @@ extern "C" fn scroll_wheel(this: &Object, _: Sel, event: id) {
         delta,
         modifiers: make_modifiers(modifiers),
     }));
+}
+
+extern "C" fn reset_cursor_rects(this: &Object, _self: Sel) {
+    unsafe {
+        let state: &mut WindowState = WindowState::from_field(this);
+        let bounds: NSRect = msg_send![this, bounds];
+        let cursor_state = &state.cursor_state;
+        if cursor_state.visible {
+            let _: id = msg_send![this, addCursorRect: bounds cursor: cursor_state.cursor];
+        }
+    }
 }
 
 unsafe fn get_drag_data(_this: &Object, dragging_info: id) -> (Vec<Data>, Point) {

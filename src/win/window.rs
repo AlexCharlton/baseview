@@ -888,7 +888,7 @@ pub fn copy_to_clipboard(_data: &str) {
 pub fn cursor_to_windows_cursor(mouse_cursor: MouseCursor) -> PCWSTR {
     match mouse_cursor {
         MouseCursor::Default => IDC_ARROW,
-        MouseCursor::Hand => IDC_HAND,
+        MouseCursor::PointingHand | MouseCursor::Hand => IDC_HAND,
         MouseCursor::Crosshair => IDC_CROSS,
         MouseCursor::Text | MouseCursor::VerticalText => IDC_IBEAM,
         MouseCursor::NotAllowed => IDC_NO,

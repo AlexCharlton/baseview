@@ -6,8 +6,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use cocoa::appkit::{
-    NSApp, NSApplication, NSApplicationActivationPolicyRegular, NSBackingStoreBuffered, NSEvent,
-    NSImage, NSPasteboard, NSView, NSWindow, NSWindowStyleMask,
+    NSApp, NSApplication, NSApplicationActivationPolicyRegular, NSBackingStoreBuffered, NSCursor,
+    NSEvent, NSImage, NSPasteboard, NSView, NSWindow, NSWindowStyleMask,
 };
 use cocoa::base::{id, nil, NO, YES};
 use cocoa::foundation::{NSArray, NSAutoreleasePool, NSPoint, NSRect, NSSize, NSString, NSURL};
@@ -30,6 +30,7 @@ use crate::{
 
 use super::keyboard::KeyboardState;
 use super::view::{create_view, BASEVIEW_STATE_IVAR};
+use crate::MouseCursor;
 
 #[cfg(feature = "opengl")]
 use crate::{
@@ -110,6 +111,8 @@ pub struct Window {
     /// Only set if we created the parent window, i.e. we are running in
     /// parentless mode
     ns_window: Option<id>,
+    /// Only set if we are running in parented mode
+    parent_ns_window: Option<id>,
     /// Our subclassed NSView
     ns_view: id,
     close_requested: bool,
@@ -148,6 +151,7 @@ impl Window {
         let window = Window {
             ns_app: None,
             ns_window: None,
+            parent_ns_window: Some(handle.ns_window as *mut Object),
             ns_view,
             close_requested: false,
             last_mouse_down: RefCell::new(None),
@@ -190,6 +194,7 @@ impl Window {
         let window = Window {
             ns_app: None,
             ns_window: None,
+            parent_ns_window: None,
             ns_view,
             close_requested: false,
             last_mouse_down: RefCell::new(None),
@@ -270,6 +275,7 @@ impl Window {
         let window = Window {
             ns_app: Some(app),
             ns_window: Some(ns_window),
+            parent_ns_window: None,
             ns_view,
             close_requested: false,
             last_mouse_down: RefCell::new(None),
@@ -311,6 +317,7 @@ impl Window {
             window,
             window_handler,
             keyboard_state: KeyboardState::new(),
+            cursor_state: Default::default(),
             frame_timer: None,
             retain_count_after_build,
             window_info,
@@ -415,7 +422,58 @@ impl Window {
     }
 
     pub fn set_mouse_cursor(&mut self, mouse_cursor: MouseCursor) {
-        // TODO
+        unsafe {
+            let ns_window = self.ns_window.or(self.parent_ns_window).unwrap_or(ptr::null_mut());
+            let state: &mut WindowState = WindowState::from_field(&*self.ns_view);
+            if mouse_cursor == MouseCursor::Hidden {
+                if state.cursor_state.visible {
+                    state.cursor_state.visible = false;
+                    let _: id = msg_send![class!(NSCursor), hide];
+                }
+                return;
+            } else if mouse_cursor != MouseCursor::Hidden && !state.cursor_state.visible {
+                state.cursor_state.visible = true;
+                let _: id = msg_send![class!(NSCursor), unhide];
+            }
+            let cursor: id = match mouse_cursor {
+                MouseCursor::Default => NSCursor::arrow_cursor(nil),
+                MouseCursor::Hand => NSCursor::open_hand_cursor(nil),
+                MouseCursor::PointingHand => NSCursor::pointing_hand_cursor(nil),
+                MouseCursor::HandGrabbing => NSCursor::closed_hand_cursor(nil),
+                MouseCursor::Text => NSCursor::i_beam_cursor(nil),
+                MouseCursor::VerticalText => NSCursor::i_beam_cursor_for_vertical_layout(nil),
+                MouseCursor::Crosshair => NSCursor::crosshair_cursor(nil),
+                MouseCursor::EResize => NSCursor::resize_right_cursor(nil),
+                MouseCursor::WResize => NSCursor::resize_left_cursor(nil),
+                MouseCursor::NResize => NSCursor::resize_up_cursor(nil),
+                MouseCursor::SResize => NSCursor::resize_down_cursor(nil),
+                MouseCursor::NsResize | MouseCursor::RowResize => {
+                    NSCursor::resize_up_down_cursor(nil)
+                }
+                MouseCursor::EwResize | MouseCursor::ColResize => {
+                    NSCursor::resize_left_right_cursor(nil)
+                }
+                MouseCursor::NotAllowed => NSCursor::operation_not_allowed_cursor(nil),
+                MouseCursor::Copy => NSCursor::drag_copy_cursor(nil),
+                MouseCursor::NeResize => msg_send![class!(NSCursor), _windowResizeNorthEastCursor],
+                MouseCursor::NwResize => msg_send![class!(NSCursor), _windowResizeNorthWestCursor],
+                MouseCursor::SeResize => msg_send![class!(NSCursor), _windowResizeSouthEastCursor],
+                MouseCursor::SwResize => msg_send![class!(NSCursor), _windowResizeSouthWestCursor],
+                MouseCursor::NeswResize => {
+                    msg_send![class!(NSCursor), _windowResizeNorthEastSouthWestCursor]
+                }
+                MouseCursor::NwseResize => {
+                    msg_send![class!(NSCursor), _windowResizeNorthWestSouthEastCursor]
+                }
+                MouseCursor::Help => msg_send![class!(NSCursor), _helpCursor],
+                MouseCursor::ZoomIn => msg_send![class!(NSCursor), _zoomInCursor],
+                MouseCursor::ZoomOut => msg_send![class!(NSCursor), _zoomOutCursor],
+                MouseCursor::Working => msg_send![class!(NSCursor), busyButClickableCursor],
+                _ => msg_send![class!(NSCursor), arrowCursor],
+            };
+            state.cursor_state.cursor = cursor;
+            let _: id = msg_send![ns_window, invalidateCursorRectsForView: self.ns_view];
+        }
     }
 
     #[cfg(feature = "opengl")]
@@ -434,6 +492,18 @@ impl Window {
     }
 }
 
+pub struct CursorState {
+    pub cursor: id,
+    pub visible: bool,
+}
+
+impl Default for CursorState {
+    fn default() -> Self {
+        let cursor = unsafe { NSCursor::arrow_cursor(nil) };
+        Self { visible: true, cursor }
+    }
+}
+
 pub(super) struct WindowState {
     pub(crate) window: Window,
     window_handler: Box<dyn WindowHandler>,
@@ -441,6 +511,7 @@ pub(super) struct WindowState {
     frame_timer: Option<CFRunLoopTimer>,
     _parent_handle: Option<ParentHandle>,
     pub retain_count_after_build: usize,
+    pub(crate) cursor_state: CursorState,
     /// The last known window info for this window.
     pub window_info: WindowInfo,
 }
