@@ -646,17 +646,12 @@ impl Window<'_> {
             let mut flags = if parented {
                 WS_CHILD | WS_VISIBLE
             } else {
-                WS_POPUPWINDOW
-                    | WS_CAPTION
-                    | WS_VISIBLE
-                    | WS_MINIMIZEBOX
-                    | WS_MAXIMIZEBOX
-                    | WS_CLIPSIBLINGS
+                WS_POPUPWINDOW | WS_CAPTION | WS_VISIBLE | WS_MINIMIZEBOX | WS_CLIPSIBLINGS
             };
 
             if !parented {
                 if options.resizable {
-                    flags |= WS_SIZEBOX;
+                    flags |= WS_SIZEBOX | WS_MAXIMIZEBOX;
                 }
                 AdjustWindowRectEx(&mut rect, flags, FALSE, 0);
             }
