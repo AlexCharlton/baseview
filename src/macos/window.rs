@@ -29,6 +29,7 @@ use crate::{
 };
 
 use super::keyboard::KeyboardState;
+use super::menu;
 use super::view::{create_view, BASEVIEW_STATE_IVAR};
 use crate::MouseCursor;
 
@@ -287,6 +288,7 @@ impl Window {
         };
 
         let _ = Self::init(false, window, window_info, build);
+        menu::initialize();
 
         unsafe {
             ns_window.setContentView_(ns_view);
