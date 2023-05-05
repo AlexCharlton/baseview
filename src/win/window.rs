@@ -182,6 +182,7 @@ unsafe fn wnd_proc_inner(
         WM_MOUSEMOVE => {
             let mut window = window_state.create_window();
             let mut window = crate::Window::new(&mut window);
+            winapi::um::winuser::SetFocus(hwnd);
 
             let x = (lparam & 0xFFFF) as i16 as i32;
             let y = ((lparam >> 16) & 0xFFFF) as i16 as i32;
