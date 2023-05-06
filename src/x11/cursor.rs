@@ -99,6 +99,7 @@ pub(super) fn get_xcursor(display: *mut x11::xlib::Display, cursor: MouseCursor)
         MouseCursor::NeswResize => loadn(&[b"fd_double_arrow\0", b"size_fdiag\0"]),
         MouseCursor::ColResize => loadn(&[b"split_h\0", b"h_double_arrow\0"]),
         MouseCursor::RowResize => loadn(&[b"split_v\0", b"v_double_arrow\0"]),
+        _ => None,
     };
 
     cursor.or_else(|| load(b"left_ptr\0")).unwrap_or(0)
