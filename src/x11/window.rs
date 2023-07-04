@@ -95,7 +95,7 @@ impl Drop for ParentHandle {
 }
 
 pub struct Window {
-    xcb_connection: XcbConnection,
+    xcb_connection: Option<XcbConnection>,
     window_id: u32,
     window_info: WindowInfo,
     // FIXME: There's all this mouse cursor logic but it's never actually used, is this correct?
@@ -110,6 +110,15 @@ pub struct Window {
 
     #[cfg(feature = "opengl")]
     gl_context: Option<GlContext>,
+}
+
+impl Drop for Window {
+    fn drop(&mut self) {
+        let conn = self.xcb_connection.take().unwrap();
+        xcb::destroy_window_checked(&conn.conn, self.window_id).request_check().unwrap();
+        // Don't actually trigger the drop because this will cause a segfault
+        std::mem::forget(conn);
+    }
 }
 
 // Hack to allow sending a RawWindowHandle between threads. Do not make public
@@ -185,6 +194,10 @@ impl Window {
         thread.join().unwrap_or_else(|err| {
             eprintln!("Window thread panicked: {:#?}", err);
         });
+    }
+
+    fn conn(&self) -> &XcbConnection {
+        self.xcb_connection.as_ref().unwrap()
     }
 
     fn window_thread<H, B>(
@@ -337,7 +350,7 @@ impl Window {
         });
 
         let mut window = Self {
-            xcb_connection,
+            xcb_connection: Some(xcb_connection),
             window_id,
             window_info,
             mouse_cursor: MouseCursor::default(),
@@ -372,16 +385,16 @@ impl Window {
             return;
         }
 
-        let xid = self.xcb_connection.get_cursor_xid(mouse_cursor);
+        let xid = self.xcb_connection.as_mut().unwrap().get_cursor_xid(mouse_cursor);
 
         if xid != 0 {
             xcb::change_window_attributes(
-                &self.xcb_connection.conn,
+                &self.conn().conn,
                 self.window_id,
                 &[(xcb::CW_CURSOR, xid)],
             );
 
-            self.xcb_connection.conn.flush();
+            self.conn().conn.flush();
         }
 
         self.mouse_cursor = mouse_cursor;
@@ -396,14 +409,14 @@ impl Window {
         let new_window_info = WindowInfo::from_logical_size(size, scaling);
 
         xcb::configure_window(
-            &self.xcb_connection.conn,
+            &self.conn().conn,
             self.window_id,
             &[
                 (xcb::CONFIG_WINDOW_WIDTH as u16, new_window_info.physical_size().width),
                 (xcb::CONFIG_WINDOW_HEIGHT as u16, new_window_info.physical_size().height),
             ],
         );
-        self.xcb_connection.conn.flush();
+        self.conn().conn.flush();
 
         // This will trigger a `ConfigureNotify` event which will in turn change `self.window_info`
         // and notify the window handler about it
@@ -414,7 +427,7 @@ impl Window {
         self.gl_context.as_ref()
     }
 
-    pub fn start_drag(&self, data: Data) {
+    pub fn start_drag(&self, _data: Data) {
         todo!()
     }
 
@@ -441,7 +454,7 @@ impl Window {
         // when they've all been coalesced.
         self.new_physical_size = None;
 
-        while let Some(event) = self.xcb_connection.conn.poll_for_event() {
+        while let Some(event) = self.conn().conn.poll_for_event() {
             self.handle_xcb_event(handler, event);
         }
 
@@ -465,7 +478,7 @@ impl Window {
         use nix::poll::*;
 
         let xcb_fd = unsafe {
-            let raw_conn = self.xcb_connection.conn.get_raw_conn();
+            let raw_conn = self.conn().conn.get_raw_conn();
             xcb::ffi::xcb_get_file_descriptor(raw_conn)
         };
 
@@ -573,8 +586,7 @@ impl Window {
                 let data = event.data().data;
                 let (_, data32, _) = unsafe { data.align_to::<u32>() };
 
-                let wm_delete_window =
-                    self.xcb_connection.atoms.wm_delete_window.unwrap_or(xcb::NONE);
+                let wm_delete_window = self.conn().atoms.wm_delete_window.unwrap_or(xcb::NONE);
 
                 if wm_delete_window == data32[0] {
                     self.handle_close_requested(handler);
@@ -695,8 +707,8 @@ unsafe impl HasRawWindowHandle for Window {
         let mut handle = XlibWindowHandle::empty();
         handle.window = self.window_id as c_ulong;
 
-        let setup = self.xcb_connection.conn.get_setup();
-        let screen = setup.roots().nth(self.xcb_connection.xlib_display as usize).unwrap();
+        let setup = self.conn().conn.get_setup();
+        let screen = setup.roots().nth(self.conn().xlib_display as usize).unwrap();
         handle.visual_id = screen.root_visual() as u64;
 
         RawWindowHandle::Xlib(handle)
@@ -706,7 +718,7 @@ unsafe impl HasRawWindowHandle for Window {
 unsafe impl HasRawDisplayHandle for Window {
     fn raw_display_handle(&self) -> raw_window_handle::RawDisplayHandle {
         let mut handle = XlibDisplayHandle::empty();
-        handle.display = self.xcb_connection.conn.get_raw_dpy() as *mut c_void;
+        handle.display = self.conn().conn.get_raw_dpy() as *mut c_void;
 
         raw_window_handle::RawDisplayHandle::Xlib(handle)
     }
@@ -723,6 +735,6 @@ fn mouse_id(id: u8) -> MouseButton {
     }
 }
 
-pub fn copy_to_clipboard(data: &str) {
+pub fn copy_to_clipboard(_data: &str) {
     todo!()
 }
