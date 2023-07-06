@@ -11,6 +11,7 @@ use raw_window_handle::{
 };
 use xcb::ffi::xcb_screen_t;
 use xcb::StructPtr;
+use xcb_util::icccm;
 
 use super::XcbConnection;
 use crate::{
@@ -273,17 +274,19 @@ impl Window {
             visual,
         );
 
+        let width = window_info.physical_size().width;
+        let height = window_info.physical_size().height;
         let window_id = xcb_connection.conn.generate_id();
         xcb::create_window_checked(
             &xcb_connection.conn,
             depth,
             window_id,
             parent_id,
-            0,                                         // x coordinate of the new window
-            0,                                         // y coordinate of the new window
-            window_info.physical_size().width as u16,  // window width
-            window_info.physical_size().height as u16, // window height
-            0,                                         // window border
+            0,             // x coordinate of the new window
+            0,             // y coordinate of the new window
+            width as u16,  // window width
+            height as u16, // window height
+            0,             // window border
             xcb::WINDOW_CLASS_INPUT_OUTPUT as u16,
             visual,
             &[
@@ -323,11 +326,23 @@ impl Window {
         if let Some((wm_protocols, wm_delete_window)) =
             xcb_connection.atoms.wm_protocols.zip(xcb_connection.atoms.wm_delete_window)
         {
-            xcb_util::icccm::set_wm_protocols(
+            icccm::set_wm_protocols(
                 &xcb_connection.conn,
                 window_id,
                 wm_protocols,
                 &[wm_delete_window],
+            );
+        }
+
+        if !options.resizable {
+            icccm::set_wm_size_hints(
+                &xcb_connection.conn,
+                window_id,
+                xcb::ATOM_WM_NORMAL_HINTS,
+                &icccm::SizeHints::empty()
+                    .min_size(width as i32, height as i32)
+                    .max_size(width as i32, height as i32)
+                    .build(),
             );
         }
 
