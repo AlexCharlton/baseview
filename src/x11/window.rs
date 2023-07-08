@@ -323,6 +323,18 @@ impl Window {
             8, // view data as 8-bit
             title.as_bytes(),
         );
+        // Allow window to be a drop target
+        let atom = xcb_connection.get_atom("XdndAware");
+        let version = &[5];
+        xcb::change_property(
+            &xcb_connection.conn,
+            xcb::PROP_MODE_REPLACE as u8,
+            window_id,
+            atom,
+            xcb::ATOM_ATOM,
+            32, // view data as 8-bit
+            version,
+        );
 
         if let Some((wm_protocols, wm_delete_window)) =
             xcb_connection.atoms.wm_protocols.zip(xcb_connection.atoms.wm_delete_window)
@@ -605,10 +617,12 @@ impl Window {
                 let data = event.data().data;
                 let (_, data32, _) = unsafe { data.align_to::<u32>() };
 
-                let wm_delete_window = self.conn().atoms.wm_delete_window.unwrap_or(xcb::NONE);
-
-                if wm_delete_window == data32[0] {
+                if data32[0] == self.conn().atoms.wm_delete_window.unwrap_or(xcb::NONE) {
                     self.handle_close_requested(handler);
+                } else {
+                    match event.type_() {
+                        x => println!("Got window message {x:?}"),
+                    }
                 }
             }
 

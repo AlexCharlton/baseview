@@ -4,6 +4,8 @@ use std::collections::HashMap;
 /// Keeps track of the xcb connection itself and the xlib display ID that was used to connect.
 use std::ffi::{CStr, CString};
 
+use xcb::Atom;
+
 use crate::MouseCursor;
 
 use super::cursor;
@@ -56,6 +58,13 @@ impl XcbConnection {
 
             cursor_cache: HashMap::new(),
         })
+    }
+
+    pub fn get_atom(&self, name: &str) -> Atom {
+        xcb::intern_atom(&self.conn, true, name)
+            .get_reply()
+            .expect(&format!("Error getting atom {name}"))
+            .atom()
     }
 
     // Try to get the scaling with this function first.
