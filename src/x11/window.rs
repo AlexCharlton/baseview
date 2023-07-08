@@ -7,7 +7,8 @@ use std::thread;
 use std::time::*;
 
 use raw_window_handle::{
-    HasRawDisplayHandle, HasRawWindowHandle, RawWindowHandle, XlibDisplayHandle, XlibWindowHandle,
+    HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandle, RawWindowHandle, XlibDisplayHandle,
+    XlibWindowHandle,
 };
 use xcb::ffi::xcb_screen_t;
 use xcb::StructPtr;
@@ -355,11 +356,14 @@ impl Window {
         let gl_context = fb_config.map(|fb_config| {
             let mut handle = XlibWindowHandle::empty();
             handle.window = window_id as c_ulong;
-            handle.display = xcb_connection.conn.get_raw_dpy() as *mut c_void;
+            //handle.display = xcb_connection.conn.get_raw_dpy() as *mut c_void;
+            let mut display = XlibDisplayHandle::empty();
+            display.display = xcb_connection.conn.get_raw_dpy() as *mut c_void;
             let handle = RawWindowHandleWrapper { handle: RawWindowHandle::Xlib(handle) };
+            let display = RawDisplayHandle::Xlib(display);
 
             // Because of the visual negotation we had to take some extra steps to create this context
-            let context = unsafe { platform::GlContext::create(&handle, fb_config) }
+            let context = unsafe { platform::GlContext::create(&handle, fb_config, &display) }
                 .expect("Could not create OpenGL context");
             GlContext::new(context)
         });

@@ -1,7 +1,7 @@
 use std::ffi::{c_void, CString};
 use std::os::raw::{c_int, c_ulong};
 
-use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
+use raw_window_handle::{HasRawWindowHandle, RawDisplayHandle, RawWindowHandle};
 
 use x11::glx;
 use x11::xlib;
@@ -80,7 +80,7 @@ impl GlContext {
     ///
     /// Use [Self::get_fb_config_and_visual] to create both of these things.
     pub unsafe fn create(
-        parent: &impl HasRawWindowHandle, config: FbConfig,
+        parent: &impl HasRawWindowHandle, config: FbConfig, display: &RawDisplayHandle,
     ) -> Result<GlContext, GlError> {
         let handle = if let RawWindowHandle::Xlib(handle) = parent.raw_window_handle() {
             handle
@@ -88,11 +88,16 @@ impl GlContext {
             return Err(GlError::InvalidWindowHandle);
         };
 
-        if handle.display.is_null() {
+        // if handle.display.is_null() {
+        //     return Err(GlError::InvalidWindowHandle);
+        // }
+        let display = if let RawDisplayHandle::Xlib(handle) = display {
+            handle
+        } else {
             return Err(GlError::InvalidWindowHandle);
-        }
+        };
 
-        let display = handle.display as *mut xlib::_XDisplay;
+        let display = display.display as *mut xlib::_XDisplay;
 
         errors::XErrorHandler::handle(display, |error_handler| {
             #[allow(non_snake_case)]
