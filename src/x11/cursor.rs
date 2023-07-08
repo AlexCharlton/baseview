@@ -60,7 +60,8 @@ pub(super) fn get_xcursor(display: *mut x11::xlib::Display, cursor: MouseCursor)
     let cursor = match cursor {
         MouseCursor::Default => None, // catch this in the fallback case below
 
-        MouseCursor::Hand => loadn(&[b"hand2\0", b"hand1\0"]),
+        MouseCursor::Hand => loadn(&[b"hand1\0"]),
+        MouseCursor::PointingHand => loadn(&[b"hand2\0"]),
         MouseCursor::HandGrabbing => loadn(&[b"closedhand\0", b"grabbing\0"]),
         MouseCursor::Help => load(b"question_arrow\0"),
 
