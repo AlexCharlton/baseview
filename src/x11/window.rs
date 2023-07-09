@@ -7,8 +7,7 @@ use std::thread;
 use std::time::*;
 
 use raw_window_handle::{
-    HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandle, RawWindowHandle, XlibDisplayHandle,
-    XlibWindowHandle,
+    HasRawDisplayHandle, HasRawWindowHandle, RawWindowHandle, XlibDisplayHandle, XlibWindowHandle,
 };
 use xcb::ffi::xcb_screen_t;
 use xcb::StructPtr;
@@ -336,16 +335,12 @@ impl Window {
             version,
         );
 
-        if let Some((wm_protocols, wm_delete_window)) =
-            xcb_connection.atoms.wm_protocols.zip(xcb_connection.atoms.wm_delete_window)
-        {
-            icccm::set_wm_protocols(
-                &xcb_connection.conn,
-                window_id,
-                wm_protocols,
-                &[wm_delete_window],
-            );
-        }
+        icccm::set_wm_protocols(
+            &xcb_connection.conn,
+            window_id,
+            xcb_connection.atoms.wm_protocols,
+            &[xcb_connection.atoms.wm_delete_window],
+        );
 
         if !options.resizable {
             icccm::set_wm_size_hints(
@@ -612,17 +607,23 @@ impl Window {
             ////
             xcb::CLIENT_MESSAGE => {
                 let event = unsafe { xcb::cast_event::<xcb::ClientMessageEvent>(&event) };
+                let atoms = &self.conn().atoms;
 
                 // what an absolute tragedy this all is
                 let data = event.data().data;
                 let (_, data32, _) = unsafe { data.align_to::<u32>() };
+                let event_type = event.type_();
 
-                if data32[0] == self.conn().atoms.wm_delete_window.unwrap_or(xcb::NONE) {
+                if data32[0] == self.conn().atoms.wm_delete_window {
                     self.handle_close_requested(handler);
-                } else {
-                    match event.type_() {
-                        x => println!("Got window message {x:?}"),
-                    }
+                } else if event_type == atoms.dnd_enter {
+                    println!("DND enter");
+                } else if event_type == atoms.dnd_position {
+                    println!("DND position");
+                } else if event_type == atoms.dnd_drop {
+                    println!("DND drop");
+                } else if event_type == atoms.dnd_leave {
+                    println!("DND leave");
                 }
             }
 

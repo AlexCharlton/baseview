@@ -11,8 +11,19 @@ use crate::MouseCursor;
 use super::cursor;
 
 pub(crate) struct Atoms {
-    pub wm_protocols: Option<u32>,
-    pub wm_delete_window: Option<u32>,
+    pub wm_protocols: u32,
+    pub wm_delete_window: u32,
+    // DND
+    pub dnd_enter: u32,
+    pub dnd_leave: u32,
+    pub dnd_drop: u32,
+    pub dnd_position: u32,
+    pub dnd_status: u32,
+    pub dnd_action_private: u32,
+    pub dnd_selection: u32,
+    pub dnd_finished: u32,
+    pub dnd_type_list: u32,
+    pub dnd_uri_list: u32,
 }
 
 pub struct XcbConnection {
@@ -33,38 +44,80 @@ macro_rules! intern_atoms {
         )+
 
         // splitting request and reply to improve throughput
+        //
 
         (
             $( $name.get_reply()
                 .map(|r| r.atom())
-                .ok()),+
+                .unwrap()),+
         )
     }};
 }
 
 impl XcbConnection {
+    #![allow(non_snake_case)]
     pub fn new() -> Result<Self, xcb::base::ConnError> {
         let (conn, xlib_display) = xcb::Connection::connect_with_xlib_display()?;
 
         conn.set_event_queue_owner(xcb::base::EventQueueOwner::Xcb);
 
         let (wm_protocols, wm_delete_window) = intern_atoms!(&conn, WM_PROTOCOLS, WM_DELETE_WINDOW);
+        let (
+            dnd_enter,
+            dnd_leave,
+            dnd_drop,
+            dnd_position,
+            dnd_status,
+            dnd_action_private,
+            dnd_selection,
+            dnd_finished,
+            dnd_type_list,
+        ) = intern_atoms!(
+            &conn,
+            XdndEnter,
+            XdndLeave,
+            XdndDrop,
+            XdndPosition,
+            XdndStatus,
+            XdndActionPrivate,
+            XdndSelection,
+            XdndFinished,
+            XdndTypeList
+        );
+        let dnd_uri_list = Self::_get_atom(&conn, "text/uri-list");
 
         Ok(Self {
             conn,
             xlib_display,
 
-            atoms: Atoms { wm_protocols, wm_delete_window },
+            atoms: Atoms {
+                wm_protocols,
+                wm_delete_window,
+                dnd_enter,
+                dnd_leave,
+                dnd_drop,
+                dnd_position,
+                dnd_status,
+                dnd_action_private,
+                dnd_selection,
+                dnd_finished,
+                dnd_type_list,
+                dnd_uri_list,
+            },
 
             cursor_cache: HashMap::new(),
         })
     }
 
-    pub fn get_atom(&self, name: &str) -> Atom {
-        xcb::intern_atom(&self.conn, true, name)
+    fn _get_atom(conn: &xcb::Connection, name: &str) -> Atom {
+        xcb::intern_atom(conn, true, name)
             .get_reply()
             .expect(&format!("Error getting atom {name}"))
             .atom()
+    }
+
+    pub fn get_atom(&self, name: &str) -> Atom {
+        Self::_get_atom(&self.conn, name)
     }
 
     // Try to get the scaling with this function first.
