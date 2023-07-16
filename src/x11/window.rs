@@ -13,7 +13,7 @@ use xcb::ffi::xcb_screen_t;
 use xcb::StructPtr;
 use xcb_util::icccm;
 
-use super::drop_handler::DropHandler;
+use super::drop_handler::{DndState, DropHandler};
 use super::XcbConnection;
 use crate::{
     Data, Event, MouseButton, MouseCursor, MouseEvent, PhyPoint, PhySize, ScrollDelta, Size,
@@ -646,79 +646,76 @@ impl Window {
                     // supply position updates with `HoveredFile` or another event, implementing
                     // that here would be trivial.
 
-                    // let source_window = client_msg.data.get_long(0) as c_ulong;
-
-                    // // Equivalent to `(x << shift) | y`
-                    // // where `shift = mem::size_of::<c_short>() * 8`
-                    // // Note that coordinates are in "desktop space", not "window space"
-                    // // (in X11 parlance, they're root window coordinates)
-                    // //let packed_coordinates = client_msg.data.get_long(2);
-                    // //let shift = mem::size_of::<libc::c_short>() * 8;
-                    // //let x = packed_coordinates >> shift;
-                    // //let y = packed_coordinates & !(x << shift);
+                    let source_window = data[0];
 
                     // // By our own state flow, `version` should never be `None` at this point.
-                    // let version = self.dnd.version.unwrap_or(5);
+                    let version = self.drop_handler.version.unwrap_or(5);
+                    let accepted = if let Some(ref type_list) = self.drop_handler.type_list {
+                        type_list.contains(&self.conn().atoms.dnd_uri_list)
+                    } else {
+                        false
+                    };
+                    dbg!(accepted);
 
-                    // // Action is specified in versions 2 and up, though we don't need it anyway.
-                    // //let action = client_msg.data.get_long(4);
-
-                    // let accepted = if let Some(ref type_list) = self.dnd.type_list {
-                    //     type_list.contains(&self.dnd.atoms.uri_list)
-                    // } else {
-                    //     false
-                    // };
-
-                    // if accepted {
-                    //     self.dnd.source_window = Some(source_window);
-                    //     unsafe {
-                    //         if self.dnd.result.is_none() {
-                    //             let time = if version >= 1 {
-                    //                 client_msg.data.get_long(3) as c_ulong
-                    //             } else {
-                    //                 // In version 0, time isn't specified
-                    //                 ffi::CurrentTime
-                    //             };
-                    //             // This results in the `SelectionNotify` event below
-                    //             self.dnd.convert_selection(window, time);
-                    //         }
-                    //         self.dnd
-                    //             .send_status(window, source_window, DndState::Accepted)
-                    //             .expect("Failed to send `XdndStatus` message.");
-                    //     }
-                    // } else {
-                    //     unsafe {
-                    //         self.dnd
-                    //             .send_status(window, source_window, DndState::Rejected)
-                    //             .expect("Failed to send `XdndStatus` message.");
-                    //     }
-                    //     self.dnd.reset();
-                    // }
+                    if accepted {
+                        self.drop_handler.source_window = Some(source_window);
+                        if self.drop_handler.result.is_none() {
+                            let time = if version >= 1 {
+                                data[3]
+                            } else {
+                                // In version 0, time isn't specified
+                                xcb::base::CURRENT_TIME
+                            };
+                            // This results in the `SelectionNotify` event below
+                            dbg!(source_window, self.window_id, version, time);
+                            // self.drop_handler.convert_selection(&self.conn(), self.window_id, time);
+                            self.drop_handler.convert_selection(&self.conn(), self.window_id, time);
+                        }
+                        self.drop_handler
+                            .send_status(
+                                &self.conn(),
+                                self.window_id,
+                                source_window,
+                                DndState::Accepted,
+                            )
+                            .expect("Failed to send `XdndStatus` message.");
+                    } else {
+                        self.drop_handler
+                            .send_status(
+                                &self.conn(),
+                                self.window_id,
+                                source_window,
+                                DndState::Rejected,
+                            )
+                            .expect("Failed to send `XdndStatus` message.");
+                        self.drop_handler.reset()
+                    }
                 } else if event_type == atoms.dnd_drop {
                     println!("DND drop");
-                    // let (source_window, state) = if let Some(source_window) = self.dnd.source_window
-                    // {
-                    //     if let Some(Ok(ref path_list)) = self.dnd.result {
-                    //         for path in path_list {
-                    //             callback(Event::WindowEvent {
-                    //                 window_id,
-                    //                 event: WindowEvent::DroppedFile(path.clone()),
-                    //             });
-                    //         }
-                    //     }
-                    //     (source_window, DndState::Accepted)
-                    // } else {
-                    //     // `source_window` won't be part of our DND state if we already rejected the drop in our
-                    //     // `XdndPosition` handler.
-                    //     let source_window = client_msg.data.get_long(0) as c_ulong;
-                    //     (source_window, DndState::Rejected)
-                    // };
-                    // unsafe {
-                    //     self.dnd
-                    //         .send_finished(window, source_window, state)
-                    //         .expect("Failed to send `XdndFinished` message.");
-                    // }
-                    // self.dnd.reset();
+                    let (source_window, state) =
+                        if let Some(source_window) = self.drop_handler.source_window {
+                            if let Some(Ok(ref path_list)) = self.drop_handler.result {
+                                for path in path_list {
+                                    // TODO
+                                    println!("Dropped {path:?}");
+                                    // callback(Event::WindowEvent {
+                                    //     window_id,
+                                    //     event: WindowEvent::DroppedFile(path.clone()),
+                                    // });
+                                }
+                            }
+                            (source_window, DndState::Accepted)
+                        } else {
+                            // `source_window` won't be part of our DND state if we already rejected the drop in our
+                            // `XdndPosition` handler.
+                            let source_window = data[0];
+                            (source_window, DndState::Rejected)
+                        };
+                    dbg!(state);
+                    self.drop_handler
+                        .send_finished(&self.conn(), self.window_id, source_window, state)
+                        .expect("Failed to send `XdndFinished` message.");
+                    self.drop_handler.reset();
                 } else if event_type == atoms.dnd_leave {
                     println!("DND leave");
                     self.drop_handler.reset();
@@ -730,28 +727,18 @@ impl Window {
                 }
             }
 
-            xcb::CONFIGURE_NOTIFY => {
-                let event = unsafe { xcb::cast_event::<xcb::ConfigureNotifyEvent>(&event) };
-
-                let new_physical_size = PhySize::new(event.width() as u32, event.height() as u32);
-
-                if self.new_physical_size.is_some()
-                    || new_physical_size != self.window_info.physical_size()
-                {
-                    self.new_physical_size = Some(new_physical_size);
-                }
-            }
-
             xcb::SELECTION_NOTIFY => {
                 let event = unsafe { xcb::cast_event::<xcb::SelectionNotifyEvent>(&event) };
                 dbg!("selection notify");
 
                 if event.property() == self.conn().atoms.dnd_selection {
                     let window = event.requestor();
+                    dbg!("dnd selection", window);
                     let mut result = None;
 
                     // This is where we receive data from drag and drop
                     if let Ok(mut data) = self.drop_handler.read_data(&self.conn(), window) {
+                        dbg!(&data);
                         let parse_result = self.drop_handler.parse_data(&mut data);
                         if let Ok(ref path_list) = parse_result {
                             for path in path_list {
@@ -767,6 +754,18 @@ impl Window {
                     }
 
                     self.drop_handler.result = result;
+                }
+            }
+
+            xcb::CONFIGURE_NOTIFY => {
+                let event = unsafe { xcb::cast_event::<xcb::ConfigureNotifyEvent>(&event) };
+
+                let new_physical_size = PhySize::new(event.width() as u32, event.height() as u32);
+
+                if self.new_physical_size.is_some()
+                    || new_physical_size != self.window_info.physical_size()
+                {
+                    self.new_physical_size = Some(new_physical_size);
                 }
             }
 
