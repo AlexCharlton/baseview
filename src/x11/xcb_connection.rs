@@ -10,6 +10,7 @@ use crate::MouseCursor;
 
 use super::cursor;
 
+#[derive(Debug)]
 pub(crate) struct Atoms {
     pub wm_protocols: u32,
     pub wm_delete_window: u32,
@@ -24,6 +25,7 @@ pub(crate) struct Atoms {
     pub dnd_finished: u32,
     pub dnd_type_list: u32,
     pub dnd_uri_list: u32,
+    pub dnd_baseview_transfer: u32,
 }
 
 pub struct XcbConnection {
@@ -85,6 +87,7 @@ impl XcbConnection {
             XdndTypeList
         );
         let dnd_uri_list = Self::_get_atom(&conn, "text/uri-list");
+        let dnd_baseview_transfer = Self::_create_atom(&conn, "BaseviewDND");
 
         Ok(Self {
             conn,
@@ -103,6 +106,7 @@ impl XcbConnection {
                 dnd_finished,
                 dnd_type_list,
                 dnd_uri_list,
+                dnd_baseview_transfer,
             },
 
             cursor_cache: HashMap::new(),
@@ -111,6 +115,13 @@ impl XcbConnection {
 
     fn _get_atom(conn: &xcb::Connection, name: &str) -> Atom {
         xcb::intern_atom(conn, true, name)
+            .get_reply()
+            .expect(&format!("Error getting atom {name}"))
+            .atom()
+    }
+
+    fn _create_atom(conn: &xcb::Connection, name: &str) -> Atom {
+        xcb::intern_atom(conn, false, name)
             .get_reply()
             .expect(&format!("Error getting atom {name}"))
             .atom()

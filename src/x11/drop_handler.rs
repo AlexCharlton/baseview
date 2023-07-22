@@ -125,23 +125,15 @@ impl DropHandler {
             window,
             conn.atoms.dnd_selection,
             conn.atoms.dnd_uri_list,
-            conn.atoms.dnd_selection,
+            conn.atoms.dnd_baseview_transfer,
             time,
         );
     }
 
     pub fn read_data(&self, conn: &XcbConnection, window: u32) -> Result<Vec<u8>, GenericError> {
-        xcb::get_property(
-            &conn.conn,
-            false,
-            window,
-            conn.atoms.dnd_selection,
-            conn.atoms.dnd_uri_list,
-            0,
-            0,
-        )
-        .get_reply()
-        .map(|r| r.value::<u8>().to_vec())
+        xcb_util::icccm::get_text_property(&conn.conn, window, conn.atoms.dnd_baseview_transfer)
+            .get_reply()
+            .map(|r| r.name().as_bytes().to_vec())
     }
 
     pub fn parse_data(&self, data: &mut [u8]) -> Result<Vec<PathBuf>, DndDataParseError> {

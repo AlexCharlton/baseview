@@ -635,16 +635,16 @@ impl Window {
                     {
                         self.drop_handler.type_list = Some(more_types);
                     }
-                    dbg!(&self.drop_handler);
                 } else if event_type == atoms.dnd_position {
                     println!("DND position");
-                    // This event occurs every time the mouse moves while a file's being dragged
-                    // over our window. We emit HoveredFile in response; while the macOS backend
-                    // does that upon a drag entering, XDND doesn't have access to the actual drop
-                    // data until this event. For parity with other platforms, we only emit
-                    // `HoveredFile` the first time, though if winit's API is later extended to
-                    // supply position updates with `HoveredFile` or another event, implementing
-                    // that here would be trivial.
+                    // This event is supposed to be sent every time a DND cursor moves
+                    // over our window. `send_status` with `DndState::Accepted`
+                    // informs sources that we're interested in this selection
+                    // TODO
+                    // but inconsistent behavior has been observed on some File managers (e.g. Thunar)
+                    // Because of this, we're going to send the baseview Dragging and Drop events
+                    // from mouse movement/release events
+                    // TODO Nope, that doesn't work...
 
                     let source_window = data[0];
 
@@ -655,7 +655,6 @@ impl Window {
                     } else {
                         false
                     };
-                    dbg!(accepted);
 
                     if accepted {
                         self.drop_handler.source_window = Some(source_window);
@@ -667,8 +666,6 @@ impl Window {
                                 xcb::base::CURRENT_TIME
                             };
                             // This results in the `SelectionNotify` event below
-                            dbg!(source_window, self.window_id, version, time);
-                            // self.drop_handler.convert_selection(&self.conn(), self.window_id, time);
                             self.drop_handler.convert_selection(&self.conn(), self.window_id, time);
                         }
                         self.drop_handler
@@ -694,14 +691,18 @@ impl Window {
                     println!("DND drop");
                     let (source_window, state) =
                         if let Some(source_window) = self.drop_handler.source_window {
-                            if let Some(Ok(ref path_list)) = self.drop_handler.result {
-                                for path in path_list {
-                                    // TODO
+                            if self.drop_handler.result.is_some()
+                                && self.drop_handler.result.as_ref().unwrap().is_ok()
+                            {
+                                let paths = self.drop_handler.result.take().unwrap().unwrap();
+                                for path in paths.iter() {
                                     println!("Dropped {path:?}");
-                                    // callback(Event::WindowEvent {
-                                    //     window_id,
-                                    //     event: WindowEvent::DroppedFile(path.clone()),
-                                    // });
+                                    handler.on_event(
+                                        &mut crate::Window::new(self),
+                                        Event::Window(WindowEvent::Drop(Data::Filepath(
+                                            path.to_path_buf(),
+                                        ))),
+                                    );
                                 }
                             }
                             (source_window, DndState::Accepted)
@@ -711,7 +712,6 @@ impl Window {
                             let source_window = data[0];
                             (source_window, DndState::Rejected)
                         };
-                    dbg!(state);
                     self.drop_handler
                         .send_finished(&self.conn(), self.window_id, source_window, state)
                         .expect("Failed to send `XdndFinished` message.");
@@ -719,41 +719,40 @@ impl Window {
                 } else if event_type == atoms.dnd_leave {
                     println!("DND leave");
                     self.drop_handler.reset();
-                    // TODO
-                    // callback(Event::WindowEvent {
-                    //     window_id,
-                    //     event: WindowEvent::HoveredFileCancelled,
-                    // });
+                    handler.on_event(
+                        &mut crate::Window::new(self),
+                        Event::Window(WindowEvent::DragLeave),
+                    );
                 }
             }
 
             xcb::SELECTION_NOTIFY => {
                 let event = unsafe { xcb::cast_event::<xcb::SelectionNotifyEvent>(&event) };
-                dbg!("selection notify");
-
-                if event.property() == self.conn().atoms.dnd_selection {
+                if event.property() == self.conn().atoms.dnd_baseview_transfer {
                     let window = event.requestor();
-                    dbg!("dnd selection", window);
-                    let mut result = None;
 
                     // This is where we receive data from drag and drop
-                    if let Ok(mut data) = self.drop_handler.read_data(&self.conn(), window) {
-                        dbg!(&data);
-                        let parse_result = self.drop_handler.parse_data(&mut data);
-                        if let Ok(ref path_list) = parse_result {
-                            for path in path_list {
-                                println!("Got dnd path: {path:?}");
-                                // TODO
-                                // callback(Event::WindowEvent {
-                                //     window_id,
-                                //     event: WindowEvent::HoveredFile(path.clone()),
-                                // });
+                    match self.drop_handler.read_data(&self.conn(), window) {
+                        Ok(mut data) => {
+                            let parse_result = self.drop_handler.parse_data(&mut data);
+                            if let Ok(ref path_list) = parse_result {
+                                for path in path_list {
+                                    println!("Got dnd path: {path:?}");
+                                    handler.on_event(
+                                        &mut crate::Window::new(self),
+                                        Event::Window(WindowEvent::DragEnter(Data::Filepath(
+                                            path.to_path_buf(),
+                                        ))),
+                                    );
+                                }
                             }
-                        }
-                        result = Some(parse_result);
-                    }
 
-                    self.drop_handler.result = result;
+                            self.drop_handler.result = Some(parse_result);
+                        }
+                        Err(e) => {
+                            dbg!(e);
+                        }
+                    }
                 }
             }
 
