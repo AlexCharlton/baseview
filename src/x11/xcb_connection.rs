@@ -4,7 +4,7 @@ use std::collections::HashMap;
 /// Keeps track of the xcb connection itself and the xlib display ID that was used to connect.
 use std::ffi::{CStr, CString};
 
-use xcb::Atom;
+use xcb::{ffi, Atom, GenericError};
 
 use crate::MouseCursor;
 
@@ -222,10 +222,35 @@ impl XcbConnection {
         *self.cursor_cache.entry(cursor).or_insert_with(|| cursor::get_xcursor(dpy, cursor))
     }
 
+    pub fn send_client_message(
+        &self, window: u32, type_: u32, data: [u32; 5],
+    ) -> Result<(), GenericError> {
+        unsafe {
+            let msg = ffi::xcb_client_message_event_t {
+                response_type: ffi::XCB_CLIENT_MESSAGE,
+                format: 32,
+                window,
+                type_,
+                data: ffi::xcb_client_message_data_t {
+                    data: std::mem::transmute::<[u32; 5], [u8; 20]>(data),
+                },
+                sequence: 0, // Any point in setting this?
+            };
+            let cookie = ffi::xcb_send_event_checked(
+                self.conn.get_raw_conn(),
+                0,
+                window,
+                0,
+                &msg as *const _ as _,
+            );
+            xcb::base::VoidCookie { cookie, conn: &self.conn, checked: true }.request_check()
+        }
+    }
+
     /// For debugging
+    #[allow(dead_code)]
     pub fn print_windows(&self) {
         let setup = self.conn.get_setup();
-        // TODO can only handle one screen
         let screen = setup.roots().nth(self.xlib_display as usize).unwrap();
 
         let mut window_map: HashMap<u32, Vec<u32>> = HashMap::new();

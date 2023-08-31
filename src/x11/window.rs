@@ -5,6 +5,7 @@ use std::sync::{mpsc, Arc, RwLock};
 use std::thread;
 use std::time::*;
 
+use keyboard_types::Modifiers;
 use raw_window_handle::{
     HasRawDisplayHandle, HasRawWindowHandle, RawWindowHandle, XlibDisplayHandle, XlibWindowHandle,
 };
@@ -698,6 +699,7 @@ impl Window {
                     self.handle_close_requested(handler);
                 } else if event_type == atoms.dnd_enter {
                     let source_window = data[0];
+                    dbg!(source_window);
                     let flags = data[1];
                     let version = flags >> 24;
                     self.drop_handler.version = Some(version);
@@ -711,15 +713,11 @@ impl Window {
                         self.drop_handler.type_list = Some(more_types);
                     }
                 } else if event_type == atoms.dnd_position {
-                    println!("DND position");
-                    // This event is supposed to be sent every time a DND cursor moves
+                    // This event is send when a DND cursor moves
                     // over our window. `send_status` with `DndState::Accepted`
                     // informs sources that we're interested in this selection
-                    // TODO
-                    // but inconsistent behavior has been observed on some File managers (e.g. Thunar)
-                    // Because of this, we're going to send the baseview Dragging and Drop events
-                    // from mouse movement/release events
-                    // TODO Nope, that doesn't work...
+
+                    // When we reply with an accepted status, we will keep getting these events whenever there is movement
 
                     let source_window = data[0];
 
@@ -731,6 +729,7 @@ impl Window {
                         false
                     };
 
+                    // TODO use drop_target_valid
                     if accepted {
                         self.drop_handler.source_window = Some(source_window);
                         if self.drop_handler.result.is_none() {
@@ -751,6 +750,34 @@ impl Window {
                                 DndState::Accepted,
                             )
                             .expect("Failed to send `XdndStatus` message.");
+
+                        // Send mouse motion and dragging events
+                        let x = data[2] >> 16;
+                        let y = data[2] & 0xFFFF;
+                        let setup = self.conn().conn.get_setup();
+                        let screen = setup.roots().nth(self.conn().xlib_display as usize).unwrap();
+                        let r = xcb::translate_coordinates(
+                            &self.conn().conn,
+                            screen.root(),
+                            self.window_id,
+                            x as i16,
+                            y as i16,
+                        )
+                        .get_reply()
+                        .expect("Could not translate coordinates");
+                        let physical_pos = PhyPoint::new(r.dst_x().into(), r.dst_y().into());
+                        let logical_pos = physical_pos.to_logical(&self.window_info);
+                        handler.on_event(
+                            &mut crate::Window::new(self),
+                            Event::Mouse(MouseEvent::CursorMoved {
+                                position: logical_pos,
+                                modifiers: Modifiers::empty(),
+                            }),
+                        );
+                        handler.on_event(
+                            &mut crate::Window::new(self),
+                            Event::Window(WindowEvent::Dragging),
+                        );
                     } else {
                         self.drop_handler
                             .send_status(
@@ -763,7 +790,7 @@ impl Window {
                         self.drop_handler.reset()
                     }
                 } else if event_type == atoms.dnd_drop {
-                    println!("DND drop");
+                    // println!("DND drop");
                     let (source_window, state) =
                         if let Some(source_window) = self.drop_handler.source_window {
                             if self.drop_handler.result.is_some()
@@ -771,7 +798,7 @@ impl Window {
                             {
                                 let paths = self.drop_handler.result.take().unwrap().unwrap();
                                 for path in paths.iter() {
-                                    println!("Dropped {path:?}");
+                                    // println!("Dropped {path:?}");
                                     handler.on_event(
                                         &mut crate::Window::new(self),
                                         Event::Window(WindowEvent::Drop(Data::Filepath(
@@ -812,7 +839,7 @@ impl Window {
                             let parse_result = self.drop_handler.parse_data(&mut data);
                             if let Ok(ref path_list) = parse_result {
                                 for path in path_list {
-                                    println!("Got dnd path: {path:?}");
+                                    // println!("Got dnd path: {path:?}");
                                     handler.on_event(
                                         &mut crate::Window::new(self),
                                         Event::Window(WindowEvent::DragEnter(Data::Filepath(

@@ -1,7 +1,6 @@
 use super::XcbConnection;
 use crate::event::Data;
 use xcb::{self, ffi, GenericError};
-use xcb_util::ewmh::send_client_message;
 
 pub(crate) struct DragHandler {
     data: Data,
@@ -54,12 +53,10 @@ impl DragHandler {
         );
         if Some(target_window) != self.target_window {
             self.target_window = Some(target_window);
-            send_client_message(
-                &conn.conn,
-                target_window,
+            conn.send_client_message(
                 target_window,
                 conn.atoms.dnd_enter,
-                &[
+                [
                     this_window,
                     (5 << 24) // Version
                     | 0, // All types supported listed in the rest of this data (no need to fetch more types)
@@ -67,19 +64,16 @@ impl DragHandler {
                     0,
                     0,
                 ],
-            )
-            .request_check()?;
+            )?;
         }
 
         // Relative position TODO?
         let x = event.event_x() as u32;
         let y = event.event_y() as u32;
-        send_client_message(
-            &conn.conn,
-            target_window,
+        conn.send_client_message(
             target_window,
             conn.atoms.dnd_position,
-            &[
+            [
                 this_window,
                 0,
                 (x << 16) | y,
@@ -87,7 +81,6 @@ impl DragHandler {
                 conn.atoms.dnd_action_copy,
             ],
         )
-        .request_check()
     }
 
     pub fn drop(&self, conn: &XcbConnection, this_window: u32) -> Result<(), GenericError> {

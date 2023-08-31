@@ -76,14 +76,12 @@ impl DropHandler {
             DndState::Accepted => (1, conn.atoms.dnd_action_private),
             DndState::Rejected => (0, xcb::ATOM_NONE),
         };
-        send_client_message(
-            &conn.conn,
-            target_window,
+        // dbg!(target_window, &[this_window, accepted, 0, 0, action.into()]);
+        conn.send_client_message(
             target_window,
             conn.atoms.dnd_status,
-            &[this_window, accepted, 0, 0, action.into()],
+            [this_window, accepted, 0, 0, action.into()],
         )
-        .request_check()
     }
 
     pub fn send_finished(
@@ -93,14 +91,11 @@ impl DropHandler {
             DndState::Accepted => (1, conn.atoms.dnd_action_private),
             DndState::Rejected => (0, xcb::ATOM_NONE),
         };
-        send_client_message(
-            &conn.conn,
-            target_window,
+        conn.send_client_message(
             target_window,
             conn.atoms.dnd_finished,
-            &[this_window, accepted, action, 0, 0],
+            [this_window, accepted, action, 0, 0],
         )
-        .request_check()
     }
 
     pub fn get_type_list(
