@@ -1,8 +1,7 @@
 use std::marker::PhantomData;
 use std::os::raw::{c_ulong, c_void};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc;
-use std::sync::Arc;
+use std::sync::{mpsc, Arc, RwLock};
 use std::thread;
 use std::time::*;
 
@@ -13,6 +12,7 @@ use xcb::ffi::xcb_screen_t;
 use xcb::StructPtr;
 use xcb_util::icccm;
 
+use super::drag_handler::DragHandler;
 use super::drop_handler::{DndState, DropHandler};
 use super::XcbConnection;
 use crate::{
@@ -107,6 +107,7 @@ pub struct Window {
     event_loop_running: bool,
     close_requested: bool,
 
+    drag_handler: Arc<RwLock<Option<DragHandler>>>,
     drop_handler: DropHandler,
 
     new_physical_size: Option<PhySize>,
@@ -391,6 +392,7 @@ impl Window {
             event_loop_running: false,
             close_requested: false,
 
+            drag_handler: Arc::new(RwLock::new(None)),
             drop_handler,
 
             new_physical_size: None,
@@ -461,8 +463,18 @@ impl Window {
         self.gl_context.as_ref()
     }
 
-    pub fn start_drag(&self, _data: Data) {
-        todo!()
+    pub fn start_drag(&self, data: Data) {
+        let handler = DragHandler::new(data);
+        handler.start(&self.conn(), self.window_id);
+        *self.drag_handler.write().unwrap() = Some(handler)
+    }
+
+    fn end_drag(&self) {
+        *self.drag_handler.write().unwrap() = None
+    }
+
+    fn is_dragging(&self) -> bool {
+        self.drag_handler.read().unwrap().is_some()
     }
 
     fn find_visual_for_depth(screen: &StructPtr<xcb_screen_t>, depth: u8) -> Option<u32> {
@@ -489,7 +501,11 @@ impl Window {
         self.new_physical_size = None;
 
         while let Some(event) = self.conn().conn.poll_for_event() {
-            self.handle_xcb_event(handler, event);
+            if self.is_dragging() {
+                self.handle_dragging_event(handler, event);
+            } else {
+                self.handle_xcb_event(handler, event);
+            }
         }
 
         if let Some(size) = self.new_physical_size.take() {
@@ -584,6 +600,65 @@ impl Window {
         handler.on_event(&mut crate::Window::new(self), Event::Window(WindowEvent::WillClose));
 
         self.event_loop_running = false;
+    }
+
+    fn handle_dragging_event(&mut self, handler: &mut dyn WindowHandler, event: xcb::GenericEvent) {
+        let event_type = event.response_type() & !0x80;
+        match event_type {
+            xcb::MOTION_NOTIFY => {
+                let event = unsafe { xcb::cast_event::<xcb::MotionNotifyEvent>(&event) };
+                let detail = event.detail();
+
+                if detail != 4 && detail != 5 {
+                    if let Err(e) = self.drag_handler.write().unwrap().as_mut().unwrap().motion(
+                        event,
+                        &self.conn(),
+                        self.window_id,
+                    ) {
+                        dbg!(e);
+                    }
+                }
+            }
+            xcb::BUTTON_RELEASE => {
+                let event = unsafe { xcb::cast_event::<xcb::ButtonPressEvent>(&event) };
+                let detail = event.detail();
+
+                if !(4..=7).contains(&detail) {
+                    self.drag_handler
+                        .read()
+                        .unwrap()
+                        .as_ref()
+                        .unwrap()
+                        .drop(&self.conn(), self.window_id);
+                    self.end_drag();
+                }
+            }
+            xcb::KEY_PRESS => {
+                let event = unsafe { xcb::cast_event::<xcb::KeyPressEvent>(&event) };
+                match convert_key_press_event(event).key {
+                    // Abort
+                    keyboard_types::Key::Escape => {
+                        self.drag_handler
+                            .read()
+                            .unwrap()
+                            .as_ref()
+                            .unwrap()
+                            .cancel(&self.conn(), self.window_id);
+                        self.end_drag();
+                    }
+                    _ => (),
+                }
+            }
+            xcb::CLIENT_MESSAGE => {
+                let event = unsafe { xcb::cast_event::<xcb::ClientMessageEvent>(&event) };
+                let atoms = &self.conn().atoms;
+                let data = event.data().data32();
+                let event_type = event.type_();
+
+                dbg!("client message", event_type);
+            }
+            _ => (),
+        }
     }
 
     fn handle_xcb_event(&mut self, handler: &mut dyn WindowHandler, event: xcb::GenericEvent) {

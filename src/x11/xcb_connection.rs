@@ -21,6 +21,7 @@ pub(crate) struct Atoms {
     pub dnd_position: u32,
     pub dnd_status: u32,
     pub dnd_action_private: u32,
+    pub dnd_action_copy: u32,
     pub dnd_selection: u32,
     pub dnd_finished: u32,
     pub dnd_type_list: u32,
@@ -71,6 +72,7 @@ impl XcbConnection {
             dnd_position,
             dnd_status,
             dnd_action_private,
+            dnd_action_copy,
             dnd_selection,
             dnd_finished,
             dnd_type_list,
@@ -82,6 +84,7 @@ impl XcbConnection {
             XdndPosition,
             XdndStatus,
             XdndActionPrivate,
+            XdndActionCopy,
             XdndSelection,
             XdndFinished,
             XdndTypeList
@@ -102,6 +105,7 @@ impl XcbConnection {
                 dnd_position,
                 dnd_status,
                 dnd_action_private,
+                dnd_action_copy,
                 dnd_selection,
                 dnd_finished,
                 dnd_type_list,
@@ -216,5 +220,23 @@ impl XcbConnection {
         let dpy = self.conn.get_raw_dpy();
 
         *self.cursor_cache.entry(cursor).or_insert_with(|| cursor::get_xcursor(dpy, cursor))
+    }
+
+    /// For debugging
+    pub fn print_windows(&self) {
+        let setup = self.conn.get_setup();
+        // TODO can only handle one screen
+        let screen = setup.roots().nth(self.xlib_display as usize).unwrap();
+
+        let mut window_map: HashMap<u32, Vec<u32>> = HashMap::new();
+        let mut windows: Vec<u32> = vec![screen.root()];
+        while !windows.is_empty() {
+            let w: u32 = windows.pop().unwrap();
+            let r = xcb::query_tree(&self.conn, w).get_reply().unwrap();
+            window_map.insert(w, r.children().to_vec());
+            windows.extend(r.children().iter().cloned());
+        }
+
+        dbg!(window_map);
     }
 }
