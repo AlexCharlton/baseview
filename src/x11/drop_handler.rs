@@ -7,7 +7,6 @@ use std::{
 
 use percent_encoding::percent_decode;
 use xcb::{Atom, GenericError};
-use xcb_util::ewmh::send_client_message;
 
 use super::XcbConnection;
 
@@ -76,7 +75,6 @@ impl DropHandler {
             DndState::Accepted => (1, conn.atoms.dnd_action_private),
             DndState::Rejected => (0, xcb::ATOM_NONE),
         };
-        // dbg!(target_window, &[this_window, accepted, 0, 0, action.into()]);
         conn.send_client_message(
             target_window,
             conn.atoms.dnd_status,
@@ -151,8 +149,7 @@ impl DropHandler {
                     return Err(DndDataParseError::UnexpectedProtocol(uri.to_owned()));
                 };
 
-                let path = Path::new(&path_str).canonicalize()?;
-                path_list.push(path);
+                path_list.push(Path::new(&path_str).to_path_buf());
             }
             Ok(path_list)
         } else {

@@ -108,7 +108,7 @@ pub struct Window {
     event_loop_running: bool,
     close_requested: bool,
 
-    drag_handler: Arc<RwLock<Option<DragHandler>>>,
+    drag_handler: Arc<RwLock<DragHandler>>,
     drop_handler: DropHandler,
 
     new_physical_size: Option<PhySize>,
@@ -393,7 +393,7 @@ impl Window {
             event_loop_running: false,
             close_requested: false,
 
-            drag_handler: Arc::new(RwLock::new(None)),
+            drag_handler: Arc::new(RwLock::new(DragHandler::default())),
             drop_handler,
 
             new_physical_size: None,
@@ -465,17 +465,12 @@ impl Window {
     }
 
     pub fn start_drag(&self, data: Data) {
-        let handler = DragHandler::new(data);
-        handler.start(&self.conn(), self.window_id);
-        *self.drag_handler.write().unwrap() = Some(handler)
-    }
-
-    fn end_drag(&self) {
-        *self.drag_handler.write().unwrap() = None
+        self.drag_handler.write().unwrap().activate(data);
+        self.drag_handler.read().unwrap().start(&self.conn(), self.window_id);
     }
 
     fn is_dragging(&self) -> bool {
-        self.drag_handler.read().unwrap().is_some()
+        self.drag_handler.read().unwrap().is_active()
     }
 
     fn find_visual_for_depth(screen: &StructPtr<xcb_screen_t>, depth: u8) -> Option<u32> {
@@ -503,7 +498,9 @@ impl Window {
 
         while let Some(event) = self.conn().conn.poll_for_event() {
             if self.is_dragging() {
-                self.handle_dragging_event(handler, event);
+                if !self.handle_dragging_event(&event) {
+                    self.handle_xcb_event(handler, event);
+                }
             } else {
                 self.handle_xcb_event(handler, event);
             }
@@ -603,7 +600,8 @@ impl Window {
         self.event_loop_running = false;
     }
 
-    fn handle_dragging_event(&mut self, handler: &mut dyn WindowHandler, event: xcb::GenericEvent) {
+    // Return whether we have actual handled anything. If not, we'll handle it as a normal event
+    fn handle_dragging_event(&mut self, event: &xcb::GenericEvent) -> bool {
         let event_type = event.response_type() & !0x80;
         match event_type {
             xcb::MOTION_NOTIFY => {
@@ -611,7 +609,7 @@ impl Window {
                 let detail = event.detail();
 
                 if detail != 4 && detail != 5 {
-                    if let Err(e) = self.drag_handler.write().unwrap().as_mut().unwrap().motion(
+                    if let Err(e) = self.drag_handler.write().unwrap().motion(
                         event,
                         &self.conn(),
                         self.window_id,
@@ -619,6 +617,7 @@ impl Window {
                         dbg!(e);
                     }
                 }
+                true
             }
             xcb::BUTTON_RELEASE => {
                 let event = unsafe { xcb::cast_event::<xcb::ButtonPressEvent>(&event) };
@@ -626,13 +625,13 @@ impl Window {
 
                 if !(4..=7).contains(&detail) {
                     self.drag_handler
-                        .read()
+                        .write()
                         .unwrap()
-                        .as_ref()
-                        .unwrap()
-                        .drop(&self.conn(), self.window_id);
-                    self.end_drag();
+                        .do_drop(&self.conn(), self.window_id)
+                        .expect("Couldn't drop DND element");
+                    // TODO cursor
                 }
+                false // we still want to do the default release action
             }
             xcb::KEY_PRESS => {
                 let event = unsafe { xcb::cast_event::<xcb::KeyPressEvent>(&event) };
@@ -640,15 +639,15 @@ impl Window {
                     // Abort
                     keyboard_types::Key::Escape => {
                         self.drag_handler
-                            .read()
+                            .write()
                             .unwrap()
-                            .as_ref()
-                            .unwrap()
-                            .cancel(&self.conn(), self.window_id);
-                        self.end_drag();
+                            .cancel(&self.conn(), self.window_id)
+                            .expect("Couldn't cancel DND drag");
+                        // TODO cursor
                     }
                     _ => (),
                 }
+                true
             }
             xcb::CLIENT_MESSAGE => {
                 let event = unsafe { xcb::cast_event::<xcb::ClientMessageEvent>(&event) };
@@ -656,9 +655,37 @@ impl Window {
                 let data = event.data().data32();
                 let event_type = event.type_();
 
-                dbg!("client message", event_type);
+                if event_type == self.conn().atoms.dnd_status {
+                    self.drag_handler
+                        .write()
+                        .unwrap()
+                        .handle_status(data, &self.conn(), self.window_id)
+                        .expect("Couldn't cancel DND drag");
+
+                    // TODO cursor
+                    true
+                } else if event_type == atoms.dnd_finished {
+                    // We don't really need to do anything here.
+                    true
+                } else {
+                    false
+                }
             }
-            _ => (),
+            xcb::SELECTION_REQUEST => {
+                let event = unsafe { xcb::cast_event::<xcb::SelectionRequestEvent>(&event) };
+                if event.owner() == self.window_id
+                    && event.selection() == self.conn().atoms.dnd_selection
+                    && event.target() == self.conn().atoms.dnd_uri_list
+                {
+                    self.drag_handler
+                        .write()
+                        .unwrap()
+                        .selection_requst(event, &self.conn())
+                        .expect("Couldn't return DND data");
+                }
+                true
+            }
+            _ => false,
         }
     }
 
@@ -695,11 +722,10 @@ impl Window {
                 let data = event.data().data32();
                 let event_type = event.type_();
 
-                if data[0] == self.conn().atoms.wm_delete_window {
+                if data[0] == atoms.wm_delete_window {
                     self.handle_close_requested(handler);
                 } else if event_type == atoms.dnd_enter {
                     let source_window = data[0];
-                    dbg!(source_window);
                     let flags = data[1];
                     let version = flags >> 24;
                     self.drop_handler.version = Some(version);
@@ -729,7 +755,7 @@ impl Window {
                         false
                     };
 
-                    // TODO use drop_target_valid
+                    // TODO use drop_target_valid TODO TODO
                     if accepted {
                         self.drop_handler.source_window = Some(source_window);
                         if self.drop_handler.result.is_none() {
@@ -790,22 +816,33 @@ impl Window {
                         self.drop_handler.reset()
                     }
                 } else if event_type == atoms.dnd_drop {
-                    // println!("DND drop");
                     let (source_window, state) =
                         if let Some(source_window) = self.drop_handler.source_window {
                             if self.drop_handler.result.is_some()
                                 && self.drop_handler.result.as_ref().unwrap().is_ok()
                             {
                                 let paths = self.drop_handler.result.take().unwrap().unwrap();
-                                for path in paths.iter() {
-                                    // println!("Dropped {path:?}");
+                                if paths.is_empty() {
                                     handler.on_event(
                                         &mut crate::Window::new(self),
-                                        Event::Window(WindowEvent::Drop(Data::Filepath(
-                                            path.to_path_buf(),
-                                        ))),
+                                        Event::Window(WindowEvent::DragLeave),
                                     );
+                                } else {
+                                    for path in paths.iter() {
+                                        // println!("Dropped {path:?}");
+                                        handler.on_event(
+                                            &mut crate::Window::new(self),
+                                            Event::Window(WindowEvent::Drop(Data::Filepath(
+                                                path.to_path_buf(),
+                                            ))),
+                                        );
+                                    }
                                 }
+                            } else {
+                                handler.on_event(
+                                    &mut crate::Window::new(self),
+                                    Event::Window(WindowEvent::DragLeave),
+                                );
                             }
                             (source_window, DndState::Accepted)
                         } else {
@@ -819,7 +856,6 @@ impl Window {
                         .expect("Failed to send `XdndFinished` message.");
                     self.drop_handler.reset();
                 } else if event_type == atoms.dnd_leave {
-                    println!("DND leave");
                     self.drop_handler.reset();
                     handler.on_event(
                         &mut crate::Window::new(self),
