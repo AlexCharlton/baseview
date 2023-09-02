@@ -473,6 +473,14 @@ impl Window {
         self.drag_handler.read().unwrap().is_active()
     }
 
+    fn drop_target_valid(&self) -> bool {
+        if let Some(f) = &self.drop_handler.drop_target_valid {
+            (f)()
+        } else {
+            true
+        }
+    }
+
     fn find_visual_for_depth(screen: &StructPtr<xcb_screen_t>, depth: u8) -> Option<u32> {
         for candidate_depth in screen.allowed_depths() {
             if candidate_depth.depth() != depth {
@@ -608,6 +616,12 @@ impl Window {
                 let event = unsafe { xcb::cast_event::<xcb::MotionNotifyEvent>(&event) };
                 let detail = event.detail();
 
+                if self.drag_handler.read().unwrap().will_accept() {
+                    self.set_mouse_cursor(MouseCursor::HandGrabbing);
+                } else {
+                    self.set_mouse_cursor(MouseCursor::NotAllowed);
+                }
+
                 if detail != 4 && detail != 5 {
                     if let Err(e) = self.drag_handler.write().unwrap().motion(
                         event,
@@ -629,7 +643,7 @@ impl Window {
                         .unwrap()
                         .do_drop(&self.conn(), self.window_id)
                         .expect("Couldn't drop DND element");
-                    // TODO cursor
+                    self.set_mouse_cursor(MouseCursor::Default);
                 }
                 false // we still want to do the default release action
             }
@@ -643,7 +657,7 @@ impl Window {
                             .unwrap()
                             .cancel(&self.conn(), self.window_id)
                             .expect("Couldn't cancel DND drag");
-                        // TODO cursor
+                        self.set_mouse_cursor(MouseCursor::Default);
                     }
                     _ => (),
                 }
@@ -661,8 +675,11 @@ impl Window {
                         .unwrap()
                         .handle_status(data, &self.conn(), self.window_id)
                         .expect("Couldn't cancel DND drag");
-
-                    // TODO cursor
+                    if self.drag_handler.read().unwrap().will_accept() {
+                        self.set_mouse_cursor(MouseCursor::HandGrabbing);
+                    } else {
+                        self.set_mouse_cursor(MouseCursor::NotAllowed);
+                    }
                     true
                 } else if event_type == atoms.dnd_finished {
                     // We don't really need to do anything here.
@@ -755,7 +772,6 @@ impl Window {
                         false
                     };
 
-                    // TODO use drop_target_valid TODO TODO
                     if accepted {
                         self.drop_handler.source_window = Some(source_window);
                         if self.drop_handler.result.is_none() {
@@ -768,13 +784,13 @@ impl Window {
                             // This results in the `SelectionNotify` event below
                             self.drop_handler.convert_selection(&self.conn(), self.window_id, time);
                         }
+                        let accept = if self.drop_target_valid() {
+                            DndState::Accepted
+                        } else {
+                            DndState::Rejected
+                        };
                         self.drop_handler
-                            .send_status(
-                                &self.conn(),
-                                self.window_id,
-                                source_window,
-                                DndState::Accepted,
-                            )
+                            .send_status(&self.conn(), self.window_id, source_window, accept)
                             .expect("Failed to send `XdndStatus` message.");
 
                         // Send mouse motion and dragging events

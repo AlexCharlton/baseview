@@ -9,7 +9,7 @@ pub(crate) struct DragHandler {
     /// Are we dragging something right now?
     active: bool,
     /// Are we over a drag target that will accept the drop?
-    accept: bool, // TODO
+    accept: bool,
     /// Are we waiting for a XdndStatus message?
     waiting_for_status: bool,
     /// Have we deferred sending a XdndPosition message because we're waiting for a status?
@@ -32,6 +32,10 @@ impl DragHandler {
 
     pub fn is_active(&self) -> bool {
         self.active
+    }
+
+    pub fn will_accept(&self) -> bool {
+        self.accept
     }
 
     pub fn start(&self, conn: &XcbConnection, this_window: u32) {
