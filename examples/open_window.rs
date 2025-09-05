@@ -4,7 +4,7 @@ use rtrb::{Consumer, RingBuffer};
 
 #[cfg(target_os = "macos")]
 use baseview::copy_to_clipboard;
-use baseview::{Event, EventStatus, MouseEvent, Window, WindowHandler, WindowScalePolicy};
+use baseview::{Event, EventStatus, Window, WindowHandler, WindowScalePolicy};
 
 #[derive(Debug, Clone)]
 enum Message {
@@ -29,7 +29,7 @@ impl WindowHandler for OpenWindowExample {
 
                 #[cfg(target_os = "macos")]
                 match e {
-                    MouseEvent::ButtonPressed { button, modifiers } => {
+                    baseview::MouseEvent::ButtonPressed { button, modifiers } => {
                         copy_to_clipboard(&"This is a test!")
                     }
                     _ => (),
