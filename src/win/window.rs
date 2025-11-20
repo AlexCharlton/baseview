@@ -7,18 +7,18 @@ use winapi::um::combaseapi::CoCreateGuid;
 use winapi::um::libloaderapi::GetModuleHandleA;
 use winapi::um::winuser::{
     AdjustWindowRectEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
-    GetDpiForWindow, GetMessageW, GetWindowLongPtrW, LoadCursorW, LoadIconA, MapWindowPoints,
-    PostMessageW, RegisterClassW, ReleaseCapture, SetCapture, SetCursor,
+    GetDpiForWindow, GetMessageW, GetSystemMetrics, GetWindowLongPtrW, LoadCursorW, LoadIconA,
+    MapWindowPoints, PostMessageW, RegisterClassW, ReleaseCapture, SetCapture, SetCursor,
     SetProcessDpiAwarenessContext, SetTimer, SetWindowLongPtrW, SetWindowPos, TranslateMessage,
     UnregisterClassW, CS_OWNDC, GET_XBUTTON_WPARAM, GWLP_USERDATA, IDC_ARROW, IDC_CROSS, IDC_HAND,
     IDC_HELP, IDC_IBEAM, IDC_NO, IDC_SIZEALL, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE, IDC_SIZEWE,
-    IDC_WAIT, MAKEINTRESOURCEA, MSG, SWP_NOMOVE, SWP_NOZORDER, WHEEL_DELTA, WM_CHAR, WM_CLOSE,
-    WM_CREATE, WM_DPICHANGED, WM_INPUTLANGCHANGE, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL,
-    WM_NCDESTROY, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WM_SHOWWINDOW, WM_SIZE, WM_SYSCHAR,
-    WM_SYSKEYDOWN, WM_SYSKEYUP, WM_TIMER, WM_USER, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSW,
-    WS_CAPTION, WS_CHILD, WS_CLIPSIBLINGS, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUPWINDOW,
-    WS_SIZEBOX, WS_VISIBLE, XBUTTON1, XBUTTON2,
+    IDC_WAIT, MAKEINTRESOURCEA, MSG, SM_CXSCREEN, SM_CYSCREEN, SWP_NOMOVE, SWP_NOSIZE,
+    SWP_NOZORDER, WHEEL_DELTA, WM_CHAR, WM_CLOSE, WM_CREATE, WM_DPICHANGED, WM_INPUTLANGCHANGE,
+    WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
+    WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCDESTROY, WM_RBUTTONDOWN, WM_RBUTTONUP,
+    WM_SETCURSOR, WM_SHOWWINDOW, WM_SIZE, WM_SYSCHAR, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_TIMER,
+    WM_USER, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSW, WS_CAPTION, WS_CHILD, WS_CLIPSIBLINGS,
+    WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUPWINDOW, WS_SIZEBOX, WS_VISIBLE, XBUTTON1, XBUTTON2,
 };
 use winapi::um::{ole2, oleidl::LPDROPTARGET};
 
@@ -38,7 +38,7 @@ use raw_window_handle::{
 const BV_WINDOW_MUST_CLOSE: UINT = WM_USER + 1;
 
 use crate::{
-    Data, Event, MouseButton, MouseCursor, MouseEvent, PhyPoint, PhySize, ScrollDelta, Size,
+    Data, Event, MouseButton, MouseCursor, MouseEvent, PhyPoint, PhySize, Point, ScrollDelta, Size,
     WindowEvent, WindowHandler, WindowInfo, WindowOpenOptions, WindowScalePolicy,
 };
 
@@ -144,7 +144,7 @@ unsafe extern "system" fn wnd_proc(
         // If any of the above event handlers caused tasks to be pushed to the deferred tasks list,
         // then we'll try to handle them now
         loop {
-            // NOTE: This is written like this instead of using a `while let` loop to avoid exending
+            // NOTE: This is written like this instead of using a `while let` loop to avoid extending
             //       the borrow of `window_state.deferred_tasks` into the call of
             //       `window_state.handle_deferred_task()` since that may also generate additional
             //       messages.
@@ -501,7 +501,7 @@ struct WindowState {
 }
 
 impl WindowState {
-    fn create_window(&self) -> Window {
+    fn create_window(&self) -> Window<'_> {
         Window { state: self }
     }
 
@@ -538,6 +538,21 @@ impl WindowState {
                     )
                 };
             }
+            WindowTask::SetPosition(position) => {
+                let window_info = self.window_info.borrow();
+                let physical_pos = position.to_physical(&window_info);
+                unsafe {
+                    SetWindowPos(
+                        self.hwnd,
+                        self.hwnd,
+                        physical_pos.x,
+                        physical_pos.y,
+                        0,
+                        0,
+                        SWP_NOZORDER | SWP_NOSIZE,
+                    )
+                };
+            }
             WindowTask::Drag(data) => {
                 super::drag::start_drag(data);
             }
@@ -552,6 +567,9 @@ enum WindowTask {
     /// Resize the window to the given size. The size is in logical pixels. DPI scaling is applied
     /// automatically.
     Resize(Size),
+    /// Set the position of the window. The position is in logical pixels. DPI scaling is applied
+    /// automatically.
+    SetPosition(Point),
     /// Start a drag event
     Drag(Data),
 }
@@ -660,6 +678,7 @@ impl Window<'_> {
                 AdjustWindowRectEx(&mut rect, flags, FALSE, 0);
             }
 
+            // Create window at (0, 0) initially - we'll center it after DPI awareness is set
             let hwnd = CreateWindowExW(
                 0,
                 window_class as _,
@@ -780,6 +799,40 @@ impl Window<'_> {
                 winapi::shared::windef::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE,
             );
 
+            // Center the window on the screen if not parented
+            // We do this after setting DPI awareness so GetSystemMetrics returns correct values
+            // We need to recalculate the window size in physical pixels using the actual DPI
+            if !parented {
+                let screen_width = GetSystemMetrics(SM_CXSCREEN);
+                let screen_height = GetSystemMetrics(SM_CYSCREEN);
+
+                // Get the actual DPI of the window and recalculate physical size from logical size
+                let dpi = GetDpiForWindow(hwnd);
+                let actual_scale = dpi as f64 / 96.0;
+
+                // Recalculate physical size from the original logical size using actual DPI
+                let logical_size = options.size;
+                let client_width = (logical_size.width * actual_scale).round() as u32;
+                let client_height = (logical_size.height * actual_scale).round() as u32;
+
+                // Adjust for window decorations - now that DPI awareness is set, this will be correct
+                let mut window_rect = RECT {
+                    left: 0,
+                    top: 0,
+                    right: client_width as i32,
+                    bottom: client_height as i32,
+                };
+                AdjustWindowRectEx(&mut window_rect, flags, FALSE, 0);
+
+                let window_width = window_rect.right - window_rect.left;
+                let window_height = window_rect.bottom - window_rect.top;
+
+                let x = (screen_width - window_width) / 2;
+                let y = (screen_height - window_height) / 2;
+
+                SetWindowPos(hwnd, hwnd, x, y, 0, 0, SWP_NOZORDER | SWP_NOSIZE);
+            }
+
             // Now we can get the actual dpi of the window.
             let new_rect = if let WindowScalePolicy::SystemScaleFactor = options.scale {
                 // Only works on Windows 10 unfortunately.
@@ -840,6 +893,13 @@ impl Window<'_> {
         // To avoid reentrant event handler calls we'll defer the actual resizing until after the
         // event has been handled
         let task = WindowTask::Resize(size);
+        self.state.deferred_tasks.borrow_mut().push_back(task);
+    }
+
+    pub fn set_position(&mut self, position: Point) {
+        // To avoid reentrant event handler calls we'll defer the actual positioning until after the
+        // event has been handled
+        let task = WindowTask::SetPosition(position);
         self.state.deferred_tasks.borrow_mut().push_back(task);
     }
 

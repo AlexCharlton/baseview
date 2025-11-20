@@ -135,7 +135,7 @@ impl DragHandler {
         }
     }
 
-    pub fn selection_requst(
+    pub fn selection_request(
         &mut self, event: &xcb::SelectionRequestEvent, conn: &XcbConnection,
     ) -> Result<(), GenericError> {
         match self.data.as_ref() {

@@ -17,7 +17,7 @@ use super::drag_handler::DragHandler;
 use super::drop_handler::{DndState, DropHandler};
 use super::XcbConnection;
 use crate::{
-    Data, Event, MouseButton, MouseCursor, MouseEvent, PhyPoint, PhySize, ScrollDelta, Size,
+    Data, Event, MouseButton, MouseCursor, MouseEvent, PhyPoint, PhySize, Point, ScrollDelta, Size,
     WindowEvent, WindowHandler, WindowInfo, WindowOpenOptions, WindowScalePolicy,
 };
 
@@ -279,16 +279,30 @@ impl Window {
             visual,
         );
 
-        let width = window_info.physical_size().width;
-        let height = window_info.physical_size().height;
+        // Calculate physical size from logical size using the actual scaling factor
+        // This ensures we're using the same coordinate system as the screen dimensions
+        let width = (options.size.width * scaling).round() as u32;
+        let height = (options.size.height * scaling).round() as u32;
+
+        // Center the window on the screen if not parented
+        let (x, y) = if parent.is_none() {
+            let screen_width = screen.width_in_pixels();
+            let screen_height = screen.height_in_pixels();
+            let x = (screen_width as i32 - width as i32) / 2;
+            let y = (screen_height as i32 - height as i32) / 2;
+            (x.max(0) as i16, y.max(0) as i16)
+        } else {
+            (0, 0)
+        };
+
         let window_id = xcb_connection.conn.generate_id();
         xcb::create_window_checked(
             &xcb_connection.conn,
             depth,
             window_id,
             parent_id,
-            0,             // x coordinate of the new window
-            0,             // y coordinate of the new window
+            x,             // x coordinate of the new window
+            y,             // y coordinate of the new window
             width as u16,  // window width
             height as u16, // window height
             0,             // window border
@@ -305,7 +319,7 @@ impl Window {
                         | xcb::EVENT_MASK_KEY_RELEASE
                         | xcb::EVENT_MASK_STRUCTURE_NOTIFY,
                 ),
-                // As mentioend above, these two values are needed to be able to create a window
+                // As mentioned above, these two values are needed to be able to create a window
                 // with a dpeth of 32-bits when the parent window has a different depth
                 (xcb::CW_COLORMAP, colormap),
                 (xcb::CW_BORDER_PIXEL, 0),
@@ -377,7 +391,7 @@ impl Window {
             let handle = RawWindowHandleWrapper { handle: RawWindowHandle::Xlib(handle) };
             let display = RawDisplayHandle::Xlib(display);
 
-            // Because of the visual negotation we had to take some extra steps to create this context
+            // Because of the visual negotiation we had to take some extra steps to create this context
             let context = unsafe { platform::GlContext::create(&handle, fb_config, &display) }
                 .expect("Could not create OpenGL context");
             GlContext::new(context)
@@ -457,6 +471,21 @@ impl Window {
 
         // This will trigger a `ConfigureNotify` event which will in turn change `self.window_info`
         // and notify the window handler about it
+    }
+
+    pub fn set_position(&mut self, position: Point) {
+        let window_info = self.window_info;
+        let physical_pos = position.to_physical(&window_info);
+
+        xcb::configure_window(
+            &self.conn().conn,
+            self.window_id,
+            &[
+                (xcb::CONFIG_WINDOW_X as u16, physical_pos.x as u32),
+                (xcb::CONFIG_WINDOW_Y as u16, physical_pos.y as u32),
+            ],
+        );
+        self.conn().conn.flush();
     }
 
     #[cfg(feature = "opengl")]
@@ -697,7 +726,7 @@ impl Window {
                     self.drag_handler
                         .write()
                         .unwrap()
-                        .selection_requst(event, &self.conn())
+                        .selection_request(event, &self.conn())
                         .expect("Couldn't return DND data");
                 }
                 true

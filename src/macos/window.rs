@@ -24,8 +24,8 @@ use raw_window_handle::{
 };
 
 use crate::{
-    Data, Event, EventStatus, Size, WindowEvent, WindowHandler, WindowInfo, WindowOpenOptions,
-    WindowScalePolicy,
+    Data, Event, EventStatus, Point, Size, WindowEvent, WindowHandler, WindowInfo,
+    WindowOpenOptions, WindowScalePolicy,
 };
 
 use super::keyboard::KeyboardState;
@@ -359,6 +359,25 @@ impl Window {
         // If this is a standalone window then we'll also need to resize the window itself
         if let Some(ns_window) = self.ns_window {
             unsafe { NSWindow::setContentSize_(ns_window, size) };
+        }
+    }
+
+    pub fn set_position(&mut self, position: Point) {
+        // NOTE: macOS uses a coordinate system where (0,0) is at the bottom-left of the screen.
+        // We need to convert from top-left coordinates to bottom-left coordinates.
+        if let Some(ns_window) = self.ns_window {
+            unsafe {
+                let screen = msg_send![ns_window, screen];
+                let screen_frame: NSRect = msg_send![screen, frame];
+                let window_frame: NSRect = msg_send![ns_window, frame];
+
+                // Convert from top-left to bottom-left coordinates
+                let y_bottom_left =
+                    screen_frame.size.height - position.y.round() - window_frame.size.height;
+                let origin = NSPoint::new(position.x.round(), y_bottom_left);
+
+                let _: () = msg_send![ns_window, setFrameOrigin: origin];
+            }
         }
     }
 
