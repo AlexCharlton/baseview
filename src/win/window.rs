@@ -678,14 +678,20 @@ impl Window<'_> {
                 AdjustWindowRectEx(&mut rect, flags, FALSE, 0);
             }
 
+            // Center the window on the screen
+            let screen_width = GetSystemMetrics(SM_CXSCREEN);
+            let screen_height = GetSystemMetrics(SM_CYSCREEN);
+            let x = (screen_width - (rect.right - rect.left)) / 2;
+            let y = (screen_height - (rect.bottom - rect.top)) / 2;
+
             // Create window at (0, 0) initially - we'll center it after DPI awareness is set
             let hwnd = CreateWindowExW(
                 0,
                 window_class as _,
                 title.as_ptr(),
                 flags,
-                0,
-                0,
+                x,
+                y,
                 rect.right - rect.left,
                 rect.bottom - rect.top,
                 parent as *mut _,
@@ -799,40 +805,6 @@ impl Window<'_> {
                 winapi::shared::windef::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE,
             );
 
-            // Center the window on the screen if not parented
-            // We do this after setting DPI awareness so GetSystemMetrics returns correct values
-            // We need to recalculate the window size in physical pixels using the actual DPI
-            if !parented {
-                let screen_width = GetSystemMetrics(SM_CXSCREEN);
-                let screen_height = GetSystemMetrics(SM_CYSCREEN);
-
-                // Get the actual DPI of the window and recalculate physical size from logical size
-                let dpi = GetDpiForWindow(hwnd);
-                let actual_scale = dpi as f64 / 96.0;
-
-                // Recalculate physical size from the original logical size using actual DPI
-                let logical_size = options.size;
-                let client_width = (logical_size.width * actual_scale).round() as u32;
-                let client_height = (logical_size.height * actual_scale).round() as u32;
-
-                // Adjust for window decorations - now that DPI awareness is set, this will be correct
-                let mut window_rect = RECT {
-                    left: 0,
-                    top: 0,
-                    right: client_width as i32,
-                    bottom: client_height as i32,
-                };
-                AdjustWindowRectEx(&mut window_rect, flags, FALSE, 0);
-
-                let window_width = window_rect.right - window_rect.left;
-                let window_height = window_rect.bottom - window_rect.top;
-
-                let x = (screen_width - window_width) / 2;
-                let y = (screen_height - window_height) / 2;
-
-                SetWindowPos(hwnd, hwnd, x, y, 0, 0, SWP_NOZORDER | SWP_NOSIZE);
-            }
-
             // Now we can get the actual dpi of the window.
             let new_rect = if let WindowScalePolicy::SystemScaleFactor = options.scale {
                 // Only works on Windows 10 unfortunately.
@@ -857,25 +829,27 @@ impl Window<'_> {
             } else {
                 None
             };
-
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(window_state) as *const _ as _);
             SetTimer(hwnd, WIN_FRAME_TIMER, 15, None);
 
             if let Some(mut new_rect) = new_rect {
-                // Convert this desired"client rectangle" size to the actual "window rectangle"
-                // size (Because of course you have to do that).
-                AdjustWindowRectEx(&mut new_rect, flags, 0, 0);
+                // Recalculate the window position to center it on the screen
+                let screen_width = GetSystemMetrics(SM_CXSCREEN);
+                let screen_height = GetSystemMetrics(SM_CYSCREEN);
+                AdjustWindowRectEx(&mut new_rect, flags, FALSE, 0);
+                let x = (screen_width - (new_rect.right - new_rect.left)) / 2;
+                let y = (screen_height - (new_rect.bottom - new_rect.top)) / 2;
 
                 // Windows makes us resize the window manually. This will trigger another `WM_SIZE` event,
                 // which we can then send the user the new scale factor.
                 SetWindowPos(
                     hwnd,
                     hwnd,
-                    new_rect.left,
-                    new_rect.top,
+                    x,
+                    y,
                     new_rect.right - new_rect.left,
                     new_rect.bottom - new_rect.top,
-                    SWP_NOZORDER | SWP_NOMOVE,
+                    SWP_NOZORDER,
                 );
             }
 
