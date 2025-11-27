@@ -44,7 +44,7 @@ winapi = { version = "0.3.8", features = [
     "shellapi",
     "winerror",
 ] }
-windows = { version = "0.48", features = [
+windows = { version = "0.56", features = [
     "implement",
     "Win32_System_Ole",
     "Win32_System_Com",
@@ -55,6 +55,7 @@ windows = { version = "0.48", features = [
     "Win32_System_Memory",
     "Win32_UI_Shell",
 ] }
+windows-core = "0.56"
 uuid = { version = "0.8", features = ["v4"], optional = true }
 
 [target.'cfg(target_os="macos")'.dependencies]

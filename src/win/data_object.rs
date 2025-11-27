@@ -6,7 +6,7 @@ use windows::{
     core::implement,
     Win32::{
         Foundation::{
-            DATA_S_SAMEFORMATETC, DV_E_FORMATETC, E_NOTIMPL, E_OUTOFMEMORY, HGLOBAL,
+            GlobalFree, DATA_S_SAMEFORMATETC, DV_E_FORMATETC, E_NOTIMPL, E_OUTOFMEMORY, HGLOBAL,
             OLE_E_ADVISENOTSUPPORTED, POINT, S_FALSE, S_OK,
         },
         System::{
@@ -14,7 +14,7 @@ use windows::{
                 IDataObject, IDataObject_Impl, DATADIR_GET, FORMATETC, STGMEDIUM, STGMEDIUM_0,
                 STREAM_SEEK_END, TYMED_HGLOBAL, TYMED_ISTREAM,
             },
-            Memory::{GlobalAlloc, GlobalFree, GlobalLock, GlobalUnlock, GLOBAL_ALLOC_FLAGS},
+            Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GLOBAL_ALLOC_FLAGS},
             Ole::CF_HDROP,
         },
         UI::Shell::{SHCreateMemStream, SHCreateStdEnumFmtEtc, DROPFILES, HDROP},
@@ -45,7 +45,7 @@ impl DataObject {
                 Err(E_OUTOFMEMORY.into())
             } else {
                 std::ptr::copy_nonoverlapping(data.as_ptr(), hdrop_ptr as *mut u8, data.len());
-                GlobalUnlock(global);
+                let _ = GlobalUnlock(global);
                 Ok(global)
             }
         }
@@ -97,8 +97,8 @@ impl IDataObject_Impl for DataObject {
                 if (format.tymed & TYMED_HGLOBAL.0 as u32) != 0 {
                     let global = Self::global_from_data(&data)?;
                     let s = STGMEDIUM {
-                        tymed: TYMED_HGLOBAL,
-                        Anonymous: STGMEDIUM_0 { hGlobal: global },
+                        tymed: TYMED_HGLOBAL.0 as u32,
+                        u: STGMEDIUM_0 { hGlobal: global },
                         pUnkForRelease: std::mem::ManuallyDrop::new(None),
                     };
 
@@ -111,8 +111,8 @@ impl IDataObject_Impl for DataObject {
                         stream.Seek(0, STREAM_SEEK_END, None)?;
                     }
                     Ok(STGMEDIUM {
-                        tymed: TYMED_ISTREAM,
-                        Anonymous: STGMEDIUM_0 { pstm: std::mem::ManuallyDrop::new(Some(stream)) },
+                        tymed: TYMED_ISTREAM.0 as u32,
+                        u: STGMEDIUM_0 { pstm: std::mem::ManuallyDrop::new(Some(stream)) },
                         pUnkForRelease: std::mem::ManuallyDrop::new(None),
                     })
                 } else {
