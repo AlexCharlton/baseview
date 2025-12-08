@@ -8,7 +8,7 @@ use winapi::um::libloaderapi::GetModuleHandleA;
 use winapi::um::winuser::{
     AdjustWindowRectEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
     GetDpiForWindow, GetMessageW, GetSystemMetrics, GetWindowLongPtrW, LoadCursorW, LoadIconA,
-    MapWindowPoints, PostMessageW, RegisterClassW, ReleaseCapture, SetCapture, SetCursor,
+    PostMessageW, RegisterClassW, ReleaseCapture, ScreenToClient, SetCapture, SetCursor,
     SetProcessDpiAwarenessContext, SetTimer, SetWindowLongPtrW, SetWindowPos, TranslateMessage,
     UnregisterClassW, CS_OWNDC, GET_XBUTTON_WPARAM, GWLP_USERDATA, IDC_ARROW, IDC_CROSS, IDC_HAND,
     IDC_HELP, IDC_IBEAM, IDC_NO, IDC_SIZEALL, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE, IDC_SIZEWE,
@@ -725,18 +725,13 @@ impl Window<'_> {
                     let mut window = (*window_state_ptr).create_window();
                     let mut window = crate::Window::new(&mut window);
                     if let Some(p) = p {
-                        let mut point = p;
-                        if let Some(_parent) = &window.window.state.parent_handle {
-                            // mutates point
-                            MapWindowPoints(
-                                null_mut(),
-                                window.window.state.hwnd,
-                                &mut point as *mut _ as *mut POINT,
-                                1,
-                            );
-                        }
+                        // Convert from screen coordinates (from Windows OLE drag) to client coordinates
+                        // ScreenToClient converts screen coordinates to client-relative coordinates
+                        let mut point = POINT { x: p.x, y: p.y };
+                        ScreenToClient(window.window.state.hwnd, &mut point);
+                        let physical_pos = PhyPoint { x: point.x, y: point.y };
                         let logical_pos =
-                            point.to_logical(&window.window.state.window_info.borrow());
+                            physical_pos.to_logical(&window.window.state.window_info.borrow());
                         let event = Event::Mouse(MouseEvent::CursorMoved {
                             position: logical_pos,
                             modifiers: keyboard_types::Modifiers::empty(),
