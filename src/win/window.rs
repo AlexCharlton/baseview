@@ -14,11 +14,12 @@ use winapi::um::winuser::{
     IDC_HELP, IDC_IBEAM, IDC_NO, IDC_SIZEALL, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE, IDC_SIZEWE,
     IDC_WAIT, MAKEINTRESOURCEA, MSG, SM_CXSCREEN, SM_CYSCREEN, SWP_NOMOVE, SWP_NOSIZE,
     SWP_NOZORDER, WHEEL_DELTA, WM_CHAR, WM_CLOSE, WM_CREATE, WM_DPICHANGED, WM_INPUTLANGCHANGE,
-    WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
+    WM_KEYDOWN, WM_KEYUP, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
     WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCDESTROY, WM_RBUTTONDOWN, WM_RBUTTONUP,
-    WM_SETCURSOR, WM_SHOWWINDOW, WM_SIZE, WM_SYSCHAR, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_TIMER,
-    WM_USER, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSW, WS_CAPTION, WS_CHILD, WS_CLIPSIBLINGS,
-    WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUPWINDOW, WS_SIZEBOX, WS_VISIBLE, XBUTTON1, XBUTTON2,
+    WM_SETCURSOR, WM_SETFOCUS, WM_SHOWWINDOW, WM_SIZE, WM_SYSCHAR, WM_SYSKEYDOWN, WM_SYSKEYUP,
+    WM_TIMER, WM_USER, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSW, WS_CAPTION, WS_CHILD,
+    WS_CLIPSIBLINGS, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUPWINDOW, WS_SIZEBOX, WS_VISIBLE,
+    XBUTTON1, XBUTTON2,
 };
 use winapi::um::{ole2, oleidl::LPDROPTARGET};
 
@@ -373,6 +374,32 @@ unsafe fn wnd_proc_inner(
                 .as_mut()
                 .unwrap()
                 .on_event(&mut window, Event::Window(WindowEvent::Resized(new_window_info)));
+
+            None
+        }
+        WM_SETFOCUS => {
+            let mut window = window_state.create_window();
+            let mut window = crate::Window::new(&mut window);
+
+            window_state
+                .handler
+                .borrow_mut()
+                .as_mut()
+                .unwrap()
+                .on_event(&mut window, Event::Window(WindowEvent::Focused));
+
+            None
+        }
+        WM_KILLFOCUS => {
+            let mut window = window_state.create_window();
+            let mut window = crate::Window::new(&mut window);
+
+            window_state
+                .handler
+                .borrow_mut()
+                .as_mut()
+                .unwrap()
+                .on_event(&mut window, Event::Window(WindowEvent::Unfocused));
 
             None
         }

@@ -317,7 +317,8 @@ impl Window {
                         | xcb::EVENT_MASK_BUTTON_RELEASE
                         | xcb::EVENT_MASK_KEY_PRESS
                         | xcb::EVENT_MASK_KEY_RELEASE
-                        | xcb::EVENT_MASK_STRUCTURE_NOTIFY,
+                        | xcb::EVENT_MASK_STRUCTURE_NOTIFY
+                        | xcb::EVENT_MASK_FOCUS_CHANGE,
                 ),
                 // As mentioned above, these two values are needed to be able to create a window
                 // with a dpeth of 32-bits when the parent window has a different depth
@@ -1041,6 +1042,16 @@ impl Window {
                     &mut crate::Window::new(self),
                     Event::Keyboard(convert_key_release_event(event)),
                 );
+            }
+
+            xcb::FOCUS_IN => {
+                handler
+                    .on_event(&mut crate::Window::new(self), Event::Window(WindowEvent::Focused));
+            }
+
+            xcb::FOCUS_OUT => {
+                handler
+                    .on_event(&mut crate::Window::new(self), Event::Window(WindowEvent::Unfocused));
             }
 
             _ => {}

@@ -162,6 +162,14 @@ unsafe fn create_view_class() -> &'static Class {
         view_will_move_to_window as extern "C" fn(&Object, Sel, id),
     );
     class.add_method(
+        sel!(windowDidBecomeKey:),
+        window_did_become_key as extern "C" fn(&Object, Sel, id),
+    );
+    class.add_method(
+        sel!(windowDidResignKey:),
+        window_did_resign_key as extern "C" fn(&Object, Sel, id),
+    );
+    class.add_method(
         sel!(updateTrackingAreas:),
         update_tracking_areas as extern "C" fn(&Object, Sel, id),
     );
@@ -359,6 +367,20 @@ unsafe fn reinit_tracking_area(this: &Object, tracking_area: *mut Object) {
     ];
 }
 
+extern "C" fn window_did_become_key(this: &Object, _: Sel, notification: id) {
+    unsafe {
+        let state: &mut WindowState = WindowState::from_field(this);
+        state.trigger_event(Event::Window(WindowEvent::Focused));
+    }
+}
+
+extern "C" fn window_did_resign_key(this: &Object, _: Sel, notification: id) {
+    unsafe {
+        let state: &mut WindowState = WindowState::from_field(this);
+        state.trigger_event(Event::Window(WindowEvent::Unfocused));
+    }
+}
+
 extern "C" fn view_will_move_to_window(this: &Object, _self: Sel, new_window: id) {
     unsafe {
         let tracking_areas: *mut Object = msg_send![this, trackingAreas];
@@ -373,6 +395,10 @@ extern "C" fn view_will_move_to_window(this: &Object, _self: Sel, new_window: id
                 let _: () = msg_send![this, removeTrackingArea: tracking_area];
                 let _: () = msg_send![tracking_area, release];
             }
+
+            // Remove focus notification observers
+            let notification_center: id = msg_send![class!(NSNotificationCenter), defaultCenter];
+            let _: () = msg_send![notification_center, removeObserver: this];
         } else {
             if tracking_area_count == 0 {
                 let class = Class::get("NSTrackingArea").unwrap();
@@ -386,6 +412,24 @@ extern "C" fn view_will_move_to_window(this: &Object, _self: Sel, new_window: id
 
             let _: () = msg_send![new_window, setAcceptsMouseMovedEvents: YES];
             let _: () = msg_send![new_window, makeFirstResponder: this];
+
+            // Add focus notification observers
+            let notification_center: id = msg_send![class!(NSNotificationCenter), defaultCenter];
+            let become_key_name: id = msg_send![class!(NSString), stringWithUTF8String: b"NSWindowDidBecomeKeyNotification\0".as_ptr() as *const i8];
+            let resign_key_name: id = msg_send![class!(NSString), stringWithUTF8String: b"NSWindowDidResignKeyNotification\0".as_ptr() as *const i8];
+
+            let _: () = msg_send![notification_center,
+                addObserver:this
+                selector:sel!(windowDidBecomeKey:)
+                name:become_key_name
+                object:new_window
+            ];
+            let _: () = msg_send![notification_center,
+                addObserver:this
+                selector:sel!(windowDidResignKey:)
+                name:resign_key_name
+                object:new_window
+            ];
         }
     }
 
