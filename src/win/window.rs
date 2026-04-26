@@ -198,7 +198,9 @@ unsafe fn wnd_proc_inner(
                     .get_modifiers_from_mouse_wparam(wparam),
             });
 
-            window_state.handler.borrow_mut().as_mut().unwrap().on_event(&mut window, event);
+            let _ = window_state.handler.try_borrow_mut().map(|mut h| {
+                h.as_mut().unwrap().on_event(&mut window, event);
+            });
 
             Some(0)
         }
@@ -222,7 +224,9 @@ unsafe fn wnd_proc_inner(
                     .get_modifiers_from_mouse_wparam(wparam),
             });
 
-            window_state.handler.borrow_mut().as_mut().unwrap().on_event(&mut window, event);
+            let _ = window_state.handler.try_borrow_mut().map(|mut h| {
+                h.as_mut().unwrap().on_event(&mut window, event);
+            });
 
             Some(0)
         }
@@ -281,12 +285,9 @@ unsafe fn wnd_proc_inner(
 
                 window_state.mouse_button_counter.set(mouse_button_counter);
 
-                window_state
-                    .handler
-                    .borrow_mut()
-                    .as_mut()
-                    .unwrap()
-                    .on_event(&mut window, Event::Mouse(event));
+                let _ = window_state.handler.try_borrow_mut().map(|mut h| {
+                    h.as_mut().unwrap().on_event(&mut window, Event::Mouse(event));
+                });
             }
 
             None
@@ -311,12 +312,11 @@ unsafe fn wnd_proc_inner(
                 let mut window = window_state.create_window();
                 let mut window = crate::Window::new(&mut window);
 
-                window_state
-                    .handler
-                    .borrow_mut()
-                    .as_mut()
-                    .unwrap()
-                    .on_event(&mut window, Event::Window(WindowEvent::WillClose));
+                let _ = window_state.handler.try_borrow_mut().map(|mut h| {
+                    h.as_mut()
+                        .unwrap()
+                        .on_event(&mut window, Event::Window(WindowEvent::WillClose));
+                });
             }
 
             // DestroyWindow(hwnd);
@@ -332,12 +332,9 @@ unsafe fn wnd_proc_inner(
                 window_state.keyboard_state.borrow_mut().process_message(hwnd, msg, wparam, lparam);
 
             if let Some(event) = opt_event {
-                window_state
-                    .handler
-                    .borrow_mut()
-                    .as_mut()
-                    .unwrap()
-                    .on_event(&mut window, Event::Keyboard(event));
+                let _ = window_state.handler.try_borrow_mut().map(|mut h| {
+                    h.as_mut().unwrap().on_event(&mut window, Event::Keyboard(event));
+                });
             }
 
             if msg != WM_SYSKEYDOWN {
@@ -368,12 +365,11 @@ unsafe fn wnd_proc_inner(
                 new_window_info
             };
 
-            window_state
-                .handler
-                .borrow_mut()
-                .as_mut()
-                .unwrap()
-                .on_event(&mut window, Event::Window(WindowEvent::Resized(new_window_info)));
+            let _ = window_state.handler.try_borrow_mut().map(|mut h| {
+                h.as_mut()
+                    .unwrap()
+                    .on_event(&mut window, Event::Window(WindowEvent::Resized(new_window_info)));
+            });
 
             None
         }
@@ -381,12 +377,9 @@ unsafe fn wnd_proc_inner(
             let mut window = window_state.create_window();
             let mut window = crate::Window::new(&mut window);
 
-            window_state
-                .handler
-                .borrow_mut()
-                .as_mut()
-                .unwrap()
-                .on_event(&mut window, Event::Window(WindowEvent::Focused));
+            let _ = window_state.handler.try_borrow_mut().map(|mut h| {
+                h.as_mut().unwrap().on_event(&mut window, Event::Window(WindowEvent::Focused))
+            });
 
             None
         }
@@ -394,12 +387,9 @@ unsafe fn wnd_proc_inner(
             let mut window = window_state.create_window();
             let mut window = crate::Window::new(&mut window);
 
-            window_state
-                .handler
-                .borrow_mut()
-                .as_mut()
-                .unwrap()
-                .on_event(&mut window, Event::Window(WindowEvent::Unfocused));
+            let _ = window_state.handler.try_borrow_mut().map(|mut h| {
+                h.as_mut().unwrap().on_event(&mut window, Event::Window(WindowEvent::Unfocused))
+            });
 
             None
         }
