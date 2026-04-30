@@ -83,10 +83,10 @@ impl DropHandler {
         _pt: *const POINTL, pdwEffect: *mut DWORD,
     ) -> HRESULT {
         let drop_handler = Self::from_interface(this);
-        let hdrop = get_drop_data(pDataObj, |data| {
+        let outcome = get_drop_data(pDataObj, |data| {
             drop_handler.send_event(Event::Window(WindowEvent::DragEnter(data)), None);
         });
-        drop_handler.hovered_is_valid = hdrop.is_some();
+        drop_handler.hovered_is_valid = outcome.had_payload;
         drop_handler.cursor_effect =
             if drop_handler.hovered_is_valid && drop_handler.drop_target_valid() {
                 DROPEFFECT_COPY
@@ -130,13 +130,13 @@ impl DropHandler {
         let drop_handler = Self::from_interface(this);
         let drop_target_valid = drop_handler.drop_target_valid();
         let mut dropped = false;
-        let hdrop = get_drop_data(pDataObj, |data| {
+        let outcome = get_drop_data(pDataObj, |data| {
             if drop_target_valid {
                 dropped = true;
                 drop_handler.send_event(Event::Window(WindowEvent::Drop(data)), None);
             }
         });
-        if let Some(hdrop) = hdrop {
+        if let Some(hdrop) = outcome.hdrop {
             shellapi::DragFinish(hdrop);
         }
         if !dropped {
