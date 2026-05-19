@@ -367,7 +367,7 @@ impl Window {
         // We need to convert from top-left coordinates to bottom-left coordinates.
         if let Some(ns_window) = self.ns_window {
             unsafe {
-                let screen = msg_send![ns_window, screen];
+                let screen: id = msg_send![ns_window, screen];
                 let screen_frame: NSRect = msg_send![screen, frame];
                 let window_frame: NSRect = msg_send![ns_window, frame];
 
