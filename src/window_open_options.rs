@@ -1,9 +1,10 @@
 use crate::Size;
 
 /// The dpi scaling policy of the window
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum WindowScalePolicy {
     /// Use the system's dpi scale factor
+    #[default]
     SystemScaleFactor,
     /// Use the given dpi scale factor (e.g. `1.0` = 96 dpi)
     ScaleFactor(f64),
@@ -32,4 +33,18 @@ pub struct WindowOpenOptions {
     /// access this context through [crate::Window::gl_context].
     #[cfg(feature = "opengl")]
     pub gl_config: Option<crate::gl::GlConfig>,
+}
+
+impl Default for WindowOpenOptions {
+    fn default() -> Self {
+        Self {
+            title: String::from("baseview window"),
+            size: Size { width: 500.0, height: 400.0 },
+            scale: WindowScalePolicy::default(),
+            drop_target_valid: None,
+            resizable: true,
+            #[cfg(feature = "opengl")]
+            gl_config: None,
+        }
+    }
 }
