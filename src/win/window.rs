@@ -47,7 +47,7 @@ use super::drop_handler::DropHandler;
 use super::keyboard::KeyboardState;
 
 #[cfg(feature = "opengl")]
-use crate::{gl::GlContext, window::RawWindowHandleWrapper};
+use crate::gl::GlContext;
 
 unsafe fn generate_guid() -> String {
     let mut guid: GUID = std::mem::zeroed();
@@ -718,20 +718,18 @@ impl Window<'_> {
             );
             // todo: manage error ^
 
-            #[cfg(feature = "opengl")]
-            let gl_context: Option<GlContext> = options.gl_config.map(|gl_config| {
-                let mut handle = Win32WindowHandle::empty();
-                handle.hwnd = hwnd as *mut c_void;
-                let handle = RawWindowHandleWrapper { handle: RawWindowHandle::Win32(handle) };
-
-                GlContext::create(&handle, gl_config).expect("Could not create OpenGL context")
-            });
             // The Window refers to this `WindowState`, so this `handler` needs to be
             // initialized later
             let handler: Rc<RefCell<Option<Box<dyn WindowHandler>>>> = Rc::new(RefCell::new(None));
 
             let (parent_handle, window_handle) = ParentHandle::new(hwnd);
             let parent_handle = if parented { Some(parent_handle) } else { None };
+
+            #[cfg(feature = "opengl")]
+            let gl_context: Option<GlContext> = options.gl_config.map(|gl_config| {
+                GlContext::create(&window_handle, gl_config)
+                    .expect("Could not create OpenGL context")
+            });
 
             let drop_handler_window_handler = handler.clone();
             let drop_handler = DropHandler::new(
