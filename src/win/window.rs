@@ -46,8 +46,8 @@ const BV_WINDOW_MUST_CLOSE: u32 = WM_USER + 1;
 
 use crate::win::hook::{self, KeyboardHookHandle};
 use crate::{
-    Event, MouseButton, MouseCursor, MouseEvent, PhyPoint, PhySize, Point, ScrollDelta, Size,
-    WindowEvent, WindowHandler, WindowInfo, WindowOpenOptions, WindowScalePolicy,
+    DropData, Event, MouseButton, MouseCursor, MouseEvent, PhyPoint, PhySize, Point, ScrollDelta,
+    Size, WindowEvent, WindowHandler, WindowInfo, WindowOpenOptions, WindowScalePolicy,
 };
 
 use super::cursor::cursor_to_lpcwstr;
@@ -617,6 +617,9 @@ impl WindowState {
             WindowTask::Focus => unsafe {
                 SetFocus(self.hwnd);
             },
+            WindowTask::Drag(data) => {
+                super::drag::start_drag(data);
+            }
         }
     }
 }
@@ -633,6 +636,8 @@ pub(super) enum WindowTask {
     SetPosition(Point),
     /// Request keyboard focus for the window.
     Focus,
+    /// Start a drag operation with the given data.
+    Drag(DropData),
 }
 
 pub struct Window<'a> {
@@ -909,6 +914,13 @@ impl Window<'_> {
         // To avoid reentrant event handler calls we'll defer the actual positioning until after the
         // event has been handled
         let task = WindowTask::SetPosition(position);
+        self.state.deferred_tasks.borrow_mut().push_back(task);
+    }
+
+    pub fn start_drag(&self, data: DropData) {
+        // To avoid reentrant event handler calls we'll defer the actual drag until after the
+        // event has been handled
+        let task = WindowTask::Drag(data);
         self.state.deferred_tasks.borrow_mut().push_back(task);
     }
 

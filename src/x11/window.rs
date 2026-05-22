@@ -22,8 +22,8 @@ use x11rb::wrapper::ConnectionExt as _;
 
 use super::XcbConnection;
 use crate::{
-    Event, MouseCursor, Point, Size, WindowEvent, WindowHandler, WindowInfo, WindowOpenOptions,
-    WindowScalePolicy,
+    DropData, Event, MouseCursor, Point, Size, WindowEvent, WindowHandler, WindowInfo,
+    WindowOpenOptions, WindowScalePolicy,
 };
 
 #[cfg(feature = "opengl")]
@@ -380,6 +380,10 @@ impl<'a> Window<'a> {
             &ConfigureWindowAux::new().x(physical_pos.x).y(physical_pos.y),
         );
         let _ = self.inner.xcb_connection.conn.flush();
+    }
+
+    pub fn start_drag(&self, _data: DropData) {
+        todo!("Drag initiation is not yet supported on Linux")
     }
 
     #[cfg(feature = "opengl")]
