@@ -136,6 +136,8 @@ pub enum DropData {
     None,
     Files(Vec<PathBuf>),
     /// A URL being dragged, e.g. from a web browser.
+    ///
+    /// Not supported when initiating a drag operation from this window.
     Url(String),
 }
 
