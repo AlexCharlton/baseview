@@ -602,6 +602,9 @@ impl WindowState {
                     )
                 };
             }
+            WindowTask::Focus => unsafe {
+                SetFocus(self.hwnd);
+            },
         }
     }
 }
@@ -616,6 +619,8 @@ pub(super) enum WindowTask {
     /// Set the position of the window. The position is in logical pixels. DPI scaling is applied
     /// automatically.
     SetPosition(Point),
+    /// Request keyboard focus for the window.
+    Focus,
 }
 
 pub struct Window<'a> {
@@ -870,9 +875,9 @@ impl Window<'_> {
     }
 
     pub fn focus(&mut self) {
-        unsafe {
-            SetFocus(self.state.hwnd);
-        }
+        // To avoid reentrant event handler calls we'll defer the actual focus request until after
+        // the event has been handled
+        self.state.deferred_tasks.borrow_mut().push_back(WindowTask::Focus);
     }
 
     pub fn resize(&mut self, size: Size) {
