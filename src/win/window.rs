@@ -662,7 +662,7 @@ impl Window<'_> {
                     break;
                 }
 
-                let status = GetMessageW(&mut msg, hwnd, 0, 0);
+                let status = GetMessageW(&mut msg, null_mut(), 0, 0);
 
                 if status == -1 {
                     break;
