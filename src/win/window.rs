@@ -557,6 +557,10 @@ impl WindowState {
         self.handler.borrow_mut()
     }
 
+    pub(super) fn has_parent(&self) -> bool {
+        self._parent_handle.is_some()
+    }
+
     fn send_resized(&self, logical_size: Size) {
         let window_info =
             WindowInfo::from_logical_size(logical_size, self.current_scale_factor.get());
