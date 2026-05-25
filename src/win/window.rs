@@ -366,11 +366,8 @@ unsafe fn wnd_proc_inner(
             };
 
             if status == EventStatus::Ignored {
-                if window_state.has_parent() {
-                    let parent = GetParent(hwnd);
-                    if !parent.is_null() {
-                        SendMessageW(parent, msg, wparam, lparam);
-                    }
+                if let Some(parent) = window_state.parent() {
+                    SendMessageW(parent, msg, wparam, lparam);
                     return Some(0);
                 }
                 return None;
@@ -571,8 +568,15 @@ impl WindowState {
         self.handler.borrow_mut()
     }
 
-    pub(super) fn has_parent(&self) -> bool {
-        self._parent_handle.is_some()
+    pub(super) fn parent(&self) -> Option<HWND> {
+        unsafe {
+            let parent = GetParent(self.hwnd);
+            if parent.is_null() {
+                None
+            } else {
+                Some(parent)
+            }
+        }
     }
 
     fn send_resized(&self, logical_size: Size) {

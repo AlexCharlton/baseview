@@ -71,7 +71,7 @@ impl DropTarget {
             GetCursorPos(&mut pt as *mut POINT);
             ScreenToClient(window_state.hwnd, &mut pt as *mut POINT);
         }
-        let logical_point = if window_state.has_parent() {
+        let logical_point = if window_state.parent().is_some() {
             // If the window has a parent, the coordinates are already in logical coordinates
             Point::new(pt.x as f64, pt.y as f64)
         } else {
