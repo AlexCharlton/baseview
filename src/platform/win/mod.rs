@@ -6,6 +6,7 @@ mod error;
 #[cfg(feature = "opengl")]
 pub mod gl;
 mod hook;
+mod host;
 mod keyboard;
 mod mouse;
 mod parent_handle;

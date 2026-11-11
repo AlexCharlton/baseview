@@ -28,9 +28,10 @@ use std::collections::{HashMap, HashSet};
 use std::mem;
 use std::ops::RangeInclusive;
 
+use crate::platform::win::host::{Host, ParentKeyMessageDelivery};
 use crate::platform::BaseviewWindow;
-use crate::wrappers::win32::window::{HWnd, WmKeyboard};
-use crate::{Event, WindowEvent};
+use crate::wrappers::win32::window::{HWnd, PostMessageExt, WmKeyboard};
+use crate::{Event, EventStatus, WindowEvent};
 use keyboard_types::{Code, Key, KeyState, KeyboardEvent, Location, Modifiers, NamedKey};
 use windows_sys::Win32::{
     Foundation::{HWND, LPARAM, WPARAM},
@@ -53,6 +54,14 @@ const SHIFT_STATE_SHIFT: ShiftState = 1;
 const SHIFT_STATE_ALTGR: ShiftState = 2;
 const N_SHIFT_STATE: ShiftState = 4;
 
+/// A Win32 message that contributed to a logical keyboard event.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct WindowKeyboardMessage {
+    pub msg: u32,
+    pub wparam: WPARAM,
+    pub lparam: LPARAM,
+}
+
 /// Per-window keyboard state.
 pub(crate) struct KeyboardState {
     hkl: HKL,
@@ -61,7 +70,11 @@ pub(crate) struct KeyboardState {
     dead_keys: HashSet<(VkCode, ShiftState)>,
     has_altgr: bool,
     stash_vk: Option<VkCode>,
+    /// `WM_KEYDOWN` / `WM_SYSKEYDOWN` stashed while waiting for the following `WM_CHAR`.
+    vk_message: Option<WindowKeyboardMessage>,
     stash_utf16: Vec<u16>,
+    /// `WM_CHAR` / `WM_SYSCHAR` stashed while waiting for the final character message.
+    utf16_messages: Vec<WindowKeyboardMessage>,
 }
 
 /// Virtual key codes that are considered printable.
@@ -391,13 +404,42 @@ impl KeyboardState {
             let key_vals = HashMap::new();
             let dead_keys = HashSet::new();
             let stash_vk = None;
+            let vk_message = None;
             let stash_utf16 = Vec::new();
+            let utf16_messages = Vec::new();
             let has_altgr = false;
-            let mut result =
-                KeyboardState { hkl, key_vals, dead_keys, has_altgr, stash_vk, stash_utf16 };
+            let mut result = KeyboardState {
+                hkl,
+                key_vals,
+                dead_keys,
+                has_altgr,
+                stash_vk,
+                vk_message,
+                stash_utf16,
+                utf16_messages,
+            };
             result.load_keyboard_layout();
             result
         }
+    }
+
+    fn clear_stashed_sequence(&mut self) {
+        self.stash_vk = None;
+        self.vk_message = None;
+        self.stash_utf16.clear();
+        self.utf16_messages.clear();
+    }
+
+    fn finish_char_sequence(
+        &mut self, event: KeyboardEvent, msg: u32, wparam: WPARAM, lparam: LPARAM,
+    ) -> (KeyboardEvent, Vec<WindowKeyboardMessage>) {
+        let mut messages = Vec::new();
+        if let Some(vk_message) = self.vk_message.take() {
+            messages.push(vk_message);
+        }
+        messages.append(&mut self.utf16_messages); // Empties self.utf16_messages
+        messages.push(WindowKeyboardMessage { msg, wparam, lparam });
+        (event, messages)
     }
 
     /// Process one message from the platform.
@@ -434,7 +476,7 @@ impl KeyboardState {
     /// is likely low, though.
     pub(crate) unsafe fn process_message(
         &mut self, hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM,
-    ) -> Option<KeyboardEvent> {
+    ) -> Option<(KeyboardEvent, Vec<WindowKeyboardMessage>)> {
         match msg {
             WM_KEYDOWN | WM_SYSKEYDOWN => {
                 //println!("keydown wparam {:x} lparam {:x}", wparam, lparam);
@@ -457,8 +499,9 @@ impl KeyboardState {
                         location,
                         repeat,
                     };
-                    Some(event)
+                    Some((event, vec![WindowKeyboardMessage { msg, wparam, lparam }]))
                 } else {
+                    self.vk_message = Some(WindowKeyboardMessage { msg, wparam, lparam });
                     self.stash_vk = Some(vk);
                     None
                 }
@@ -482,7 +525,7 @@ impl KeyboardState {
                     location,
                     repeat,
                 };
-                Some(event)
+                Some((event, vec![WindowKeyboardMessage { msg, wparam, lparam }]))
             }
             WM_CHAR | WM_SYSCHAR => {
                 //println!("char wparam {:x} lparam {:x}", wparam, lparam);
@@ -516,13 +559,15 @@ impl KeyboardState {
                         location,
                         repeat,
                     };
-                    Some(event)
+                    Some(self.finish_char_sequence(event, msg, wparam, lparam))
                 } else {
+                    self.utf16_messages.push(WindowKeyboardMessage { msg, wparam, lparam });
                     self.stash_utf16.push(wparam as u16);
                     None
                 }
             }
             WM_INPUTLANGCHANGE => {
+                self.clear_stashed_sequence();
                 self.hkl = lparam as HKL;
                 self.load_keyboard_layout();
                 None
@@ -701,7 +746,7 @@ impl KeyboardState {
 
 impl WmKeyboard for BaseviewWindow {
     fn on_key_event(&self, window: HWnd, msg: u32, wparam: WPARAM, lparam: LPARAM) -> bool {
-        let opt_event = unsafe {
+        let opt_processed = unsafe {
             self.window_state.keyboard_state.borrow_mut().process_message(
                 window.as_raw(),
                 msg,
@@ -710,8 +755,40 @@ impl WmKeyboard for BaseviewWindow {
             )
         };
 
-        if let Some(event) = opt_event {
-            self.handle_event(Event::Keyboard(event));
+        let status = if let Some((event, _)) = opt_processed.as_ref() {
+            self.handle_event(Event::Keyboard(event.clone()))
+        } else {
+            // Intermediate messages in a multi-message key sequence are held until the
+            // final message produces an event.
+            EventStatus::Captured
+        };
+
+        if status == EventStatus::Ignored {
+            if let (Some(parent), Some((_, messages))) =
+                (window.get_parent(), opt_processed.as_ref())
+            {
+                let delivery = Host::current().parent_key_message_delivery();
+                if delivery == ParentKeyMessageDelivery::None {
+                    return false;
+                }
+
+                for message in messages {
+                    match delivery {
+                        ParentKeyMessageDelivery::Send => {
+                            parent.send_message(message.msg, message.wparam, message.lparam);
+                        }
+                        ParentKeyMessageDelivery::Post => {
+                            // SAFETY: These are the original keyboard messages we just received.
+                            unsafe {
+                                parent.post_message(message.msg, message.wparam, message.lparam);
+                            }
+                        }
+                        ParentKeyMessageDelivery::None => {}
+                    }
+                }
+                return true;
+            }
+            return false;
         }
 
         msg != WM_SYSKEYDOWN

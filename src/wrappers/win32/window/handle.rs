@@ -9,7 +9,9 @@ use std::ptr::{null_mut, NonNull};
 use std::time::Duration;
 use windows::Win32::System::Ole::IDropTarget;
 use windows_core::{Error, Interface, InterfaceRef, Result, HRESULT};
-use windows_sys::Win32::Foundation::{SetLastError, FALSE, HWND, LPARAM, POINT, S_OK, WPARAM};
+use windows_sys::Win32::Foundation::{
+    SetLastError, FALSE, HWND, LPARAM, LRESULT, POINT, S_OK, WPARAM,
+};
 use windows_sys::Win32::Graphics::Gdi::{
     GetUpdateRect, InvalidateRect, MonitorFromWindow, ScreenToClient, ValidateRect,
     MONITOR_DEFAULTTOPRIMARY,
@@ -20,9 +22,10 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetFocus, ReleaseCapture, SetCapture, SetFocus, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    DestroyWindow, GetWindowLongPtrW, GetWindowLongW, KillTimer, PostMessageW, SetParent, SetTimer,
-    SetWindowLongPtrW, SetWindowPos, ShowWindow, GWLP_USERDATA, GWL_EXSTYLE, GWL_STYLE,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SW_HIDE, SW_SHOW, WINDOW_LONG_PTR_INDEX, WM_USER,
+    DestroyWindow, GetParent, GetWindowLongPtrW, GetWindowLongW, KillTimer, PostMessageW,
+    SendMessageW, SetParent, SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWLP_USERDATA,
+    GWL_EXSTYLE, GWL_STYLE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SW_HIDE, SW_SHOW,
+    WINDOW_LONG_PTR_INDEX, WM_USER,
 };
 
 pub(crate) const BV_WINDOW_MUST_CLOSE: u32 = WM_USER + 1;
@@ -105,6 +108,15 @@ impl HWnd {
         }
 
         Ok(())
+    }
+
+    pub fn get_parent(&self) -> Option<HWnd> {
+        let parent = unsafe { GetParent(self.as_raw()) };
+        NonNull::new(parent).map(|ptr| unsafe { HWnd::from_raw(ptr) })
+    }
+
+    pub fn send_message(&self, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        unsafe { SendMessageW(self.as_raw(), msg, wparam, lparam) }
     }
 
     pub fn get_dpi(&self, extended_user32: &ExtendedUser32) -> Option<Dpi> {
