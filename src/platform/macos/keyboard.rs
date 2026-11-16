@@ -388,15 +388,10 @@ const MODIFIER_MAP: &[(NSEventModifierFlags, Modifiers)] = &[
     (NSEventModifierFlags::CapsLock, Modifiers::CAPS_LOCK),
 ];
 
-/// Command-modified key events are the ones AppKit offers to the main menu
-/// via `performKeyEquivalent:` before `keyDown:`/`keyUp:`.
-pub(crate) fn is_command_key(event: &NSEvent) -> bool {
+/// Key-down and key-up events. Modifier-only changes arrive as `flagsChanged`.
+pub(crate) fn is_key_press(event: &NSEvent) -> bool {
     let ty = event.r#type();
-    if ty != NSEventType::KeyDown && ty != NSEventType::KeyUp {
-        return false;
-    }
-
-    event.modifierFlags().contains(NSEventModifierFlags::Command)
+    ty == NSEventType::KeyDown || ty == NSEventType::KeyUp
 }
 
 pub(crate) fn make_modifiers(raw: NSEventModifierFlags) -> Modifiers {

@@ -1,6 +1,6 @@
 #![expect(deprecated, reason = "Allow use of NSFilenamesPboardType for now")]
 
-use super::keyboard::{is_command_key, make_modifiers, KeyboardState};
+use super::keyboard::{is_key_press, make_modifiers, KeyboardState};
 use super::window::WindowSharedState;
 use crate::dpi::{LogicalPosition, LogicalSize};
 use crate::host::Host;
@@ -18,8 +18,8 @@ use crate::{
 };
 use objc2::__framework_prelude::Retained;
 use objc2::rc::Weak;
-use objc2::runtime::{NSObjectProtocol, ProtocolObject};
-use objc2::{msg_send, AllocAnyThread, ClassType, MainThreadMarker};
+use objc2::runtime::{Imp, NSObjectProtocol, ProtocolObject, Sel};
+use objc2::{msg_send, sel, AllocAnyThread, ClassType, MainThreadMarker};
 use objc2_app_kit::{
     NSApplication, NSDragOperation, NSDraggingInfo, NSEvent, NSFilenamesPboardType, NSTrackingArea,
     NSTrackingAreaOptions, NSView, NSWindow,
@@ -29,6 +29,7 @@ use objc2_quartz_core::CADisplayLink;
 use std::cell::{Cell, OnceCell, RefCell};
 use std::ptr::null;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 pub enum ViewParentingType {
@@ -72,6 +73,8 @@ pub(crate) struct BaseviewView {
     notification_center_observer: Cell<Option<NotificationCenterObserver>>,
 
     keyboard_state: KeyboardState,
+    /// This view is registered with the `sendEvent:` hook.
+    send_event_registered: Cell<bool>,
 
     parenting: RefCell<ViewParentingType>,
     pub(crate) lifetime_tied_to_app: Cell<Option<Weak<NSApplication>>>,
@@ -106,6 +109,7 @@ impl BaseviewView {
             state: Rc::clone(&state),
 
             keyboard_state: KeyboardState::new(),
+            send_event_registered: Cell::new(false),
             display_link: OnceCell::new(),
             display_link_started: false.into(),
             window_handler: WindowHandlerContainer::new(),
@@ -164,6 +168,9 @@ impl BaseviewView {
             });
             view.notification_center_observer.set(Some(observer));
 
+            register_key_view(Weak::new(view.view), view.mtm);
+            view.send_event_registered.set(true);
+
             Ok(())
         })?;
 
@@ -207,6 +214,7 @@ impl BaseviewView {
 
     pub fn close(this: ViewRef<Self>, from_host: bool) {
         this.state.closed.set(true);
+        Self::release_send_event_hook(this);
         this.view.removeFromSuperview();
         this.notification_center_observer.take();
         this.window_handler.destroy();
@@ -284,6 +292,14 @@ impl BaseviewView {
         this.view.isEqual(Some(&first_responder))
     }
 
+    fn release_send_event_hook(this: ViewRef<Self>) {
+        if !this.send_event_registered.replace(false) {
+            return;
+        }
+        unregister_key_view(this.view);
+        uninstall_send_event_hook(this.mtm);
+    }
+
     /// Deliver `event` to the window handler, unless this same `NSEvent` was
     /// already delivered (see [`Self::perform_key_equivalent`]).
     ///
@@ -354,6 +370,9 @@ impl BaseviewView {
 impl Drop for BaseviewView {
     fn drop(&mut self) {
         self.state.closed.set(true);
+        if self.send_event_registered.replace(false) {
+            uninstall_send_event_hook(self.mtm);
+        }
     }
 }
 
@@ -752,22 +771,19 @@ impl ViewImpl for BaseviewView {
         }
     }
 
-    /// Cmd shortcuts are offered here, before `keyDown:`/`keyUp:`.
+    /// Keys the host would otherwise consume are offered here, before `keyDown:`.
     ///
-    /// AppKit walks the view hierarchy with `performKeyEquivalent:`. If every
-    /// view declines, it invokes the matching main-menu item and never delivers
-    /// the event to the first responder. Reaper and Cubase leave Copy, Paste,
-    /// and the other Edit shortcuts enabled, so those hosts handle Cmd-C/V
-    /// themselves. Hosts that disable the menu item while the editor is focused
-    /// fall through to `keyDown:` instead, which is why the same binding already
-    /// works there.
+    /// AppKit walks the view hierarchy with `performKeyEquivalent:` for command
+    /// shortcuts and for other bound keys such as Escape, Return, and the arrow
+    /// keys. If every view declines, the host handles the binding and `keyDown:`
+    /// never runs.
     ///
-    /// The handler sees the event once. [`EventStatus::Captured`] consumes it
-    /// so the host menu does not run. [`EventStatus::Ignored`] leaves the
-    /// shortcut with the host. The delivery is remembered because a host that
-    /// does not use the menu still follows this call with `keyDown:`/`keyUp:`.
+    /// The handler sees the event once. [`EventStatus::Captured`] consumes it.
+    /// [`EventStatus::Ignored`] leaves it with the host. The delivery is
+    /// remembered because a host that does not take the key still follows this
+    /// call with `keyDown:`/`keyUp:`.
     fn perform_key_equivalent(this: ViewRef<Self>, event: &NSEvent) -> bool {
-        if !is_command_key(event) || !Self::is_first_responder(this) {
+        if !is_key_press(event) || !Self::is_first_responder(this) {
             return false;
         }
 
@@ -776,10 +792,9 @@ impl ViewImpl for BaseviewView {
             return false;
         }
 
-        let captured = Self::dispatch_keyboard_event(this, event)
-            .is_some_and(|status| status != EventStatus::Ignored);
+        let status = Self::dispatch_keyboard_event(this, event);
         this.keyboard_state.leave_key_equivalent();
-        captured
+        status.is_some_and(|status| status != EventStatus::Ignored)
     }
 
     fn key_down(this: ViewRef<Self>, event: &NSEvent) {
@@ -814,6 +829,132 @@ impl ViewImpl for BaseviewView {
                 }
             }
         }
+    }
+}
+
+type SendEventImp = unsafe extern "C-unwind" fn(&NSApplication, Sel, &NSEvent);
+
+thread_local! {
+    static KEY_VIEWS: RefCell<Vec<Weak<View<BaseviewView>>>> =
+        const { RefCell::new(Vec::new()) };
+}
+
+/// Views that may claim a key inside the host's `sendEvent:`.
+fn register_key_view(view: Weak<View<BaseviewView>>, mtm: MainThreadMarker) {
+    KEY_VIEWS.with(|views| {
+        let mut views = views.borrow_mut();
+        views.retain(|weak| weak.load().is_some());
+        views.push(view);
+    });
+    install_send_event_hook(mtm);
+}
+
+fn unregister_key_view(view: &View<BaseviewView>) {
+    KEY_VIEWS.with(|views| {
+        views.borrow_mut().retain(|weak| match weak.load() {
+            Some(loaded) => !std::ptr::eq(&*loaded, view),
+            None => false,
+        });
+    });
+}
+
+/// Reaper's `sendEvent:` consumes keys before AppKit asks the view. That
+/// includes command shortcuts and other bindings such as Escape.
+///
+/// Offer the key to a plug-in view in that window when the view is its first
+/// responder. `true` means the plug-in captured it and Reaper must not also
+/// run the binding.
+fn claim_key(event: &NSEvent) -> bool {
+    if !is_key_press(event) {
+        return false;
+    }
+
+    // SAFETY: `sendEvent:` runs on the main thread.
+    let mtm = unsafe { MainThreadMarker::new_unchecked() };
+    let Some(event_window) = event.window(mtm) else { return false };
+
+    let views: Vec<_> =
+        KEY_VIEWS.with(|views| views.borrow().iter().filter_map(Weak::load).collect());
+
+    for view in views {
+        let Some(our_window) = view.window() else { continue };
+        if !our_window.isEqual(Some(&*event_window)) {
+            continue;
+        }
+
+        let Some(inner) = view.inner_ref() else { continue };
+        let responder = our_window.firstResponder();
+        let focused = responder.as_ref().is_some_and(|responder| view.isEqual(Some(responder)));
+        if !focused {
+            continue;
+        }
+
+        let status = BaseviewView::dispatch_keyboard_event(inner, event);
+        return status.is_some_and(|status| status != EventStatus::Ignored);
+    }
+
+    false
+}
+static SEND_EVENT_DEPTH: AtomicUsize = AtomicUsize::new(0);
+static ORIGINAL_SEND_EVENT: AtomicUsize = AtomicUsize::new(0);
+
+/// Wrap `NSApp`'s `sendEvent:` so a focused plug-in view can claim keys before
+/// the host. The original implementation is restored when the last view closes,
+/// so unloading the plug-in does not leave a dangling function.
+fn install_send_event_hook(mtm: MainThreadMarker) {
+    if SEND_EVENT_DEPTH.fetch_add(1, Ordering::AcqRel) > 0 {
+        return;
+    }
+
+    let app = NSApplication::sharedApplication(mtm);
+    let class = app.class();
+    let Some(method) = class.instance_method(sel!(sendEvent:)) else {
+        SEND_EVENT_DEPTH.fetch_sub(1, Ordering::AcqRel);
+        return;
+    };
+
+    let original = method.implementation();
+    ORIGINAL_SEND_EVENT.store(imp_to_usize(original), Ordering::Release);
+    unsafe { method.set_implementation(usize_to_imp(send_event_imp_to_usize(hooked_send_event))) };
+}
+
+fn uninstall_send_event_hook(mtm: MainThreadMarker) {
+    if SEND_EVENT_DEPTH.fetch_sub(1, Ordering::AcqRel) != 1 {
+        return;
+    }
+
+    let original = ORIGINAL_SEND_EVENT.swap(0, Ordering::AcqRel);
+    if original == 0 {
+        return;
+    }
+
+    let app = NSApplication::sharedApplication(mtm);
+    let Some(method) = app.class().instance_method(sel!(sendEvent:)) else { return };
+    unsafe { method.set_implementation(usize_to_imp(original)) };
+}
+
+fn imp_to_usize(imp: Imp) -> usize {
+    imp as usize
+}
+
+fn usize_to_imp(imp: usize) -> Imp {
+    unsafe { std::mem::transmute(imp) }
+}
+
+fn send_event_imp_to_usize(imp: SendEventImp) -> usize {
+    imp as usize
+}
+
+unsafe extern "C-unwind" fn hooked_send_event(_this: &NSApplication, cmd: Sel, event: &NSEvent) {
+    if is_key_press(event) && claim_key(event) {
+        return;
+    }
+
+    let original = ORIGINAL_SEND_EVENT.load(Ordering::Acquire);
+    if original != 0 {
+        let original: SendEventImp =
+            unsafe { std::mem::transmute::<usize, SendEventImp>(original) };
+        unsafe { original(_this, cmd, event) };
     }
 }
 
