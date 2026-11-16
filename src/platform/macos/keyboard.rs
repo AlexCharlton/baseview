@@ -19,6 +19,7 @@
 //! Conversion of platform keyboard event into cross-platform event.
 
 use crate::keyboard::code_to_location;
+use crate::EventStatus;
 use keyboard_types::{Code, Key, KeyState, KeyboardEvent, Modifiers, NamedKey};
 use objc2_app_kit::{NSEvent, NSEventModifierFlags, NSEventType};
 use std::cell::Cell;
@@ -34,6 +35,24 @@ use std::cell::Cell;
 /// TextInputHandler.mm.
 pub(crate) struct KeyboardState {
     last_mods: Cell<NSEventModifierFlags>,
+    /// The last key event already offered to the window handler.
+    ///
+    /// `performKeyEquivalent:` and `keyDown:`/`keyUp:` can both observe one
+    /// AppKit event. This remembers the first delivery so the second call
+    /// does not emit a second [`KeyboardEvent`](keyboard_types::KeyboardEvent).
+    delivered: Cell<Option<DeliveredKey>>,
+    /// Set while `performKeyEquivalent:` is dispatching, so a re-entrant call
+    /// from `interpretKeyEvents:` cannot handle the same event again.
+    in_key_equivalent: Cell<bool>,
+}
+
+#[derive(Clone, Copy)]
+struct DeliveredKey {
+    ty: NSEventType,
+    key_code: u16,
+    timestamp_bits: u64,
+    is_repeat: bool,
+    status: EventStatus,
 }
 
 /// Convert a macOS platform key code (keyCode field of NSEvent).
@@ -258,12 +277,49 @@ fn is_modifier_code(code: Code) -> bool {
 
 impl KeyboardState {
     pub(crate) fn new() -> KeyboardState {
-        let last_mods = Cell::new(NSEventModifierFlags::empty());
-        KeyboardState { last_mods }
+        KeyboardState {
+            last_mods: Cell::new(NSEventModifierFlags::empty()),
+            delivered: Cell::new(None),
+            in_key_equivalent: Cell::new(false),
+        }
     }
 
     pub(crate) fn last_mods(&self) -> NSEventModifierFlags {
         self.last_mods.get()
+    }
+
+    pub(crate) fn enter_key_equivalent(&self) -> bool {
+        if self.in_key_equivalent.get() {
+            return false;
+        }
+
+        self.in_key_equivalent.set(true);
+        true
+    }
+
+    pub(crate) fn leave_key_equivalent(&self) {
+        self.in_key_equivalent.set(false);
+    }
+
+    /// `Some` when this exact `NSEvent` was already turned into a keyboard event.
+    pub(crate) fn delivered_status(&self, event: &NSEvent) -> Option<EventStatus> {
+        let delivered = self.delivered.get()?;
+        let same = delivered.ty == event.r#type()
+            && delivered.key_code == event.keyCode()
+            && delivered.timestamp_bits == event.timestamp().to_bits()
+            && delivered.is_repeat == event.isARepeat();
+
+        same.then_some(delivered.status)
+    }
+
+    pub(crate) fn remember_delivery(&self, event: &NSEvent, status: EventStatus) {
+        self.delivered.set(Some(DeliveredKey {
+            ty: event.r#type(),
+            key_code: event.keyCode(),
+            timestamp_bits: event.timestamp().to_bits(),
+            is_repeat: event.isARepeat(),
+            status,
+        }));
     }
 
     pub(crate) fn process_native_event(&self, event: &NSEvent) -> Option<KeyboardEvent> {
@@ -331,6 +387,17 @@ const MODIFIER_MAP: &[(NSEventModifierFlags, Modifiers)] = &[
     (NSEventModifierFlags::Command, Modifiers::META),
     (NSEventModifierFlags::CapsLock, Modifiers::CAPS_LOCK),
 ];
+
+/// Command-modified key events are the ones AppKit offers to the main menu
+/// via `performKeyEquivalent:` before `keyDown:`/`keyUp:`.
+pub(crate) fn is_command_key(event: &NSEvent) -> bool {
+    let ty = event.r#type();
+    if ty != NSEventType::KeyDown && ty != NSEventType::KeyUp {
+        return false;
+    }
+
+    event.modifierFlags().contains(NSEventModifierFlags::Command)
+}
 
 pub(crate) fn make_modifiers(raw: NSEventModifierFlags) -> Modifiers {
     let mut modifiers = Modifiers::empty();

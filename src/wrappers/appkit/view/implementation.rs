@@ -145,6 +145,10 @@ pub unsafe fn create_view_class<V: ViewImpl>() -> &'static AnyClass {
         class.add_method(sel!(keyDown:), key_down::<V> as extern "C-unwind" fn(_, _, _));
         class.add_method(sel!(keyUp:), key_up::<V> as extern "C-unwind" fn(_, _, _));
         class.add_method(sel!(flagsChanged:), flags_changed::<V> as extern "C-unwind" fn(_, _, _));
+        class.add_method(
+            sel!(performKeyEquivalent:),
+            perform_key_equivalent::<V> as extern "C-unwind" fn(_, _, _) -> _,
+        );
 
         class.add_method(sel!(cursorUpdate:), cursor_update::<V> as extern "C-unwind" fn(_, _, _));
     }
@@ -316,6 +320,19 @@ extern "C-unwind" fn key_up<V: ViewImpl>(this: &View<V>, _: Sel, event: &NSEvent
 extern "C-unwind" fn flags_changed<V: ViewImpl>(this: &View<V>, _: Sel, event: &NSEvent) {
     let Some(inner) = this.inner_ref() else { return };
     V::flags_changed(inner, event);
+}
+
+extern "C-unwind" fn perform_key_equivalent<V: ViewImpl>(
+    this: &View<V>, _: Sel, event: &NSEvent,
+) -> Bool {
+    if let Some(inner) = this.inner_ref() {
+        if V::perform_key_equivalent(inner, event) {
+            return Bool::YES;
+        }
+    }
+
+    // Declining lets the main menu, and then `keyDown:`, handle the event.
+    unsafe { msg_send![super(this, NSView::class()), performKeyEquivalent: event] }
 }
 
 extern "C-unwind" fn mouse_down<V: ViewImpl>(this: &View<V>, _sel: Sel, event: &NSEvent) {

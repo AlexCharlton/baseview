@@ -206,4 +206,7 @@ pub trait ViewImpl: Sized {
     fn key_down(this: ViewRef<Self>, event: &NSEvent);
     fn key_up(this: ViewRef<Self>, event: &NSEvent);
     fn flags_changed(this: ViewRef<Self>, event: &NSEvent);
+
+    /// Handle a main-menu key equivalent. `true` consumes the event.
+    fn perform_key_equivalent(this: ViewRef<Self>, event: &NSEvent) -> bool;
 }

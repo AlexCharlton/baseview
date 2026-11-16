@@ -1,6 +1,6 @@
 #![expect(deprecated, reason = "Allow use of NSFilenamesPboardType for now")]
 
-use super::keyboard::{make_modifiers, KeyboardState};
+use super::keyboard::{is_command_key, make_modifiers, KeyboardState};
 use super::window::WindowSharedState;
 use crate::dpi::{LogicalPosition, LogicalSize};
 use crate::host::Host;
@@ -276,6 +276,29 @@ impl BaseviewView {
     /// Trigger the event immediately and return the event status.
     fn trigger_event(this: ViewRef<Self>, event: Event) -> EventStatus {
         this.window_handler.use_handler(|h| h.on_event(event)).unwrap_or(EventStatus::Ignored)
+    }
+
+    fn is_first_responder(this: ViewRef<Self>) -> bool {
+        let Some(window) = this.view.window() else { return false };
+        let Some(first_responder) = window.firstResponder() else { return false };
+        this.view.isEqual(Some(&first_responder))
+    }
+
+    /// Deliver `event` to the window handler, unless this same `NSEvent` was
+    /// already delivered (see [`Self::perform_key_equivalent`]).
+    ///
+    /// `None` means the event was not a key the handler can observe. Callers
+    /// must not forward those to `super` — that matches the previous
+    /// `keyDown:`/`keyUp:` behavior.
+    fn dispatch_keyboard_event(this: ViewRef<Self>, event: &NSEvent) -> Option<EventStatus> {
+        if let Some(status) = this.keyboard_state.delivered_status(event) {
+            return Some(status);
+        }
+
+        let key_event = this.keyboard_state.process_native_event(event)?;
+        let status = Self::trigger_event(this, Event::Keyboard(key_event));
+        this.keyboard_state.remember_delivery(event, status);
+        Some(status)
     }
 
     fn trigger_frame(this: ViewRef<Self>) {
@@ -729,30 +752,52 @@ impl ViewImpl for BaseviewView {
         }
     }
 
+    /// Cmd shortcuts are offered here, before `keyDown:`/`keyUp:`.
+    ///
+    /// AppKit walks the view hierarchy with `performKeyEquivalent:`. If every
+    /// view declines, it invokes the matching main-menu item and never delivers
+    /// the event to the first responder. Reaper and Cubase leave Copy, Paste,
+    /// and the other Edit shortcuts enabled, so those hosts handle Cmd-C/V
+    /// themselves. Hosts that disable the menu item while the editor is focused
+    /// fall through to `keyDown:` instead, which is why the same binding already
+    /// works there.
+    ///
+    /// The handler sees the event once. [`EventStatus::Captured`] consumes it
+    /// so the host menu does not run. [`EventStatus::Ignored`] leaves the
+    /// shortcut with the host. The delivery is remembered because a host that
+    /// does not use the menu still follows this call with `keyDown:`/`keyUp:`.
+    fn perform_key_equivalent(this: ViewRef<Self>, event: &NSEvent) -> bool {
+        if !is_command_key(event) || !Self::is_first_responder(this) {
+            return false;
+        }
+
+        // `keyDown:` -> `interpretKeyEvents:` can call back in here.
+        if !this.keyboard_state.enter_key_equivalent() {
+            return false;
+        }
+
+        let captured = Self::dispatch_keyboard_event(this, event)
+            .is_some_and(|status| status != EventStatus::Ignored);
+        this.keyboard_state.leave_key_equivalent();
+        captured
+    }
+
     fn key_down(this: ViewRef<Self>, event: &NSEvent) {
-        if let Some(key_event) = this.keyboard_state.process_native_event(event) {
-            let status = Self::trigger_event(this, Event::Keyboard(key_event));
+        if let Some(EventStatus::Ignored) = Self::dispatch_keyboard_event(this, event) {
+            unsafe {
+                let superclass = msg_send![this.view, superclass];
 
-            if let EventStatus::Ignored = status {
-                unsafe {
-                    let superclass = msg_send![this.view, superclass];
-
-                    let () = msg_send![super(this.view, superclass), keyDown:event];
-                }
+                let () = msg_send![super(this.view, superclass), keyDown:event];
             }
         }
     }
 
     fn key_up(this: ViewRef<Self>, event: &NSEvent) {
-        if let Some(key_event) = this.keyboard_state.process_native_event(event) {
-            let status = Self::trigger_event(this, Event::Keyboard(key_event));
+        if let Some(EventStatus::Ignored) = Self::dispatch_keyboard_event(this, event) {
+            unsafe {
+                let superclass = msg_send![this.view, superclass];
 
-            if let EventStatus::Ignored = status {
-                unsafe {
-                    let superclass = msg_send![this.view, superclass];
-
-                    let () = msg_send![super(this.view, superclass), keyUp:event];
-                }
+                let () = msg_send![super(this.view, superclass), keyUp:event];
             }
         }
     }
