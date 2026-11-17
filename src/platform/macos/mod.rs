@@ -2,6 +2,7 @@ mod context;
 mod cursor;
 mod damage;
 mod error;
+mod host;
 mod keyboard;
 mod timer;
 mod view;

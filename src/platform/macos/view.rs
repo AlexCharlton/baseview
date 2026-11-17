@@ -1,5 +1,6 @@
 #![expect(deprecated, reason = "Allow use of NSFilenamesPboardType for now")]
 
+use super::host::PluginHost;
 use super::keyboard::{is_key_press, make_modifiers, KeyboardState};
 use super::window::WindowSharedState;
 use crate::dpi::{LogicalPosition, LogicalSize};
@@ -168,8 +169,10 @@ impl BaseviewView {
             });
             view.notification_center_observer.set(Some(observer));
 
-            register_key_view(Weak::new(view.view), view.mtm);
-            view.send_event_registered.set(true);
+            if PluginHost::current().needs_send_event_hook() {
+                register_key_view(Weak::new(view.view), view.mtm);
+                view.send_event_registered.set(true);
+            }
 
             Ok(())
         })?;
